@@ -42,7 +42,11 @@ SHA256 проверенного EXE:
 SHA256 графического моста:
 `09EC873F002FC19ADEFAD9BB0139B18E2C29D955789C0DB489B75182D1B4830F`.
 
-Запуск установленной версии: `E:\C&C ZH GPTMOD\CaCGZH\Test-X64.cmd`.
+Запуск установленной версии: существующие ярлыки Generals и Zero Hour на
+рабочем столе, указывающие на `generals.exe` в CaCG и CaCGZH. Launcher
+запускает `Client/generals-client.exe`; тестовые BAT/EXE удалены из игровых
+папок. Подготовлены локальные установщик и архив обеих игр:
+[client-release.md](client-release.md).
 Инструкции сборки: [x64-development-build.md](x64-development-build.md).
 Нативный порт W3D/DX12 и x64 Bink-видео ещё не завершены. Старые Miles
 DSP-фильтры не эмулируются. DLSS Quality пока не даёт выигрыша FPS в
