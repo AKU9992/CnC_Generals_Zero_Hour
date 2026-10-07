@@ -18,7 +18,7 @@ if(-not $text.Contains('#include "NeuralAaToggle.inc"')){
     if([regex]::Matches($text,$pattern).Count -ne 1){throw 'Missing AA save anchor.'}
     $text=[regex]::Replace($text,$pattern,'// antialiasing'+"`n"+'    applyNeuralSelection(*pref);')
     $anchor='GadgetComboBoxSetSelectedPos(comboBoxAntiAliasing, pos);'
-    $text=$text.Replace($anchor,$anchor+"`n"+'    createNeuralToggle((*pref)["NeuralAntiAliasingLastMode"]);')
+    $text=$text.Replace($anchor,$anchor+"`n"+'    createNeuralToggle((*pref)["NeuralAntiAliasingLastMode"], (*pref)["NeuralAntiAliasingLastStandard"]);')
     $anchor='lastAntiAliasingChoice = choice;'+"`n"+'                }'
     if(-not $text.Contains($anchor)){throw 'Missing dropdown event anchor.'}
     $text=$text.Replace($anchor,'lastAntiAliasingChoice = choice;'+"`n"+'                    updateNeuralToggle();'+"`n"+'                }')
@@ -27,6 +27,8 @@ if(-not $text.Contains('#include "NeuralAaToggle.inc"')){
     $anchor='void OptionsMenuShutdown( WindowLayout *layout, void *userData )'+"`n"+'{'
     $text=$text.Replace($anchor,$anchor+"`n"+'    neuralToggleButton = nullptr;')
 }
+$text=$text.Replace('createNeuralToggle((*pref)["NeuralAntiAliasingLastMode"]);','createNeuralToggle((*pref)["NeuralAntiAliasingLastMode"], (*pref)["NeuralAntiAliasingLastStandard"]);')
+$text=$text.Replace('str = TheGameText->fetch( temp );', 'str = i == 0 ? UnicodeString(L"\u0412\u044b\u043a\u043b.") : UnicodeString(i == 1 ? L"MSAA 2x" : i == 2 ? L"MSAA 4x" : L"MSAA 8x");')
 [IO.File]::WriteAllText($path,$text)
 if(-not $text.Contains('#include "NeuralAaToggleTest.inc"')) {
     [IO.File]::AppendAllText($path,"`n"+'#include "NeuralAaToggleTest.inc"'+"`n")

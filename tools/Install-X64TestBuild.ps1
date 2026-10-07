@@ -19,7 +19,8 @@ if ($vanilla) {
     $toggle = Get-Content -LiteralPath (Join-Path $repositoryPath '.build\neural-aa-toggle-validation.json') -Raw | ConvertFrom-Json
     if ($toggle.executableSha256 -ne $probe.executableSha256 -or $toggle.bridgeSha256 -ne $probe.bridgeSha256 -or
         -not $toggle.toggleCallbacksVerified -or -not $toggle.dlaaOffOnVerified -or -not $toggle.dlssOffOnVerified -or
-        -not $toggle.preferencePersistenceVerified -or -not $toggle.reopenedMenuVerified) {
+        -not $toggle.preferencePersistenceVerified -or -not $toggle.reopenedMenuVerified -or
+        -not $toggle.standardAaRestoredVerified -or -not $toggle.dropdownOverlayVerified) {
         throw 'The on/off menu toggle and preference persistence must pass for the current Generals build.'
     }
 }

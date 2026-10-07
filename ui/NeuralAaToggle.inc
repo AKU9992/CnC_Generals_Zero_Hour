@@ -1,6 +1,7 @@
 // generals-mods neural AA on/off toggle
 static GameWindow* neuralToggleButton = nullptr;
 static Int rememberedNeuralChoice = OptionPreferences::AntiAliasingMode_Count + 1;
+static Int rememberedStandardChoice = OptionPreferences::AntiAliasingMode_MSAA_4X;
 static Bool isNeuralChoice(Int choice) {
     return choice >= OptionPreferences::AntiAliasingMode_Count && choice < OptionPreferences::AntiAliasingMode_Count + 2;
 }
@@ -8,14 +9,22 @@ static void updateNeuralToggle() {
     if (!neuralToggleButton) return;
     Int choice = -1; GadgetComboBoxGetSelectedPos(comboBoxAntiAliasing, &choice);
     if (isNeuralChoice(choice)) rememberedNeuralChoice = choice;
+    else if (choice > 0 && choice < OptionPreferences::AntiAliasingMode_Count) rememberedStandardChoice = choice;
     GadgetButtonSetText(neuralToggleButton, UnicodeString(isNeuralChoice(choice) ? L"\u0412\u041a\u041b" : L"\u0412\u042b\u041a\u041b"));
     neuralToggleButton->winEnable(TheDisplay->supportsNeuralAA(Display::NEURAL_AA_DLAA) ||
         TheDisplay->supportsNeuralAA(Display::NEURAL_AA_DLSS_QUALITY));
 }
-static void createNeuralToggle(const AsciiString& rememberedMode) {
+static void createNeuralToggle(const AsciiString& rememberedMode, const AsciiString& standardMode) {
     const auto id = TheNameKeyGenerator->nameToKey("OptionsMenu.wnd:ButtonNeuralToggle");
     neuralToggleButton = TheWindowManager->winGetWindowFromId(nullptr, id);
     rememberedNeuralChoice = OptionPreferences::AntiAliasingMode_Count + (rememberedMode == "DLSSQuality" ? 0 : 1);
+    Int standard = atoi(standardMode.str());
+    rememberedStandardChoice = standard > 0 && standard < OptionPreferences::AntiAliasingMode_Count
+        ? standard : OptionPreferences::AntiAliasingMode_MSAA_4X;
+    if (standardMode.isEmpty()) {
+        Int selected = -1; GadgetComboBoxGetSelectedPos(comboBoxAntiAliasing, &selected);
+        if (selected > 0 && selected < OptionPreferences::AntiAliasingMode_Count) rememberedStandardChoice = selected;
+    }
     if (!neuralToggleButton && comboBoxAntiAliasing) {
         GameWindow* prototype = TheWindowManager->winGetWindowFromId(nullptr,
             TheNameKeyGenerator->nameToKey("OptionsMenu.wnd:ButtonAccept"));
@@ -53,6 +62,15 @@ static void createNeuralToggle(const AsciiString& rememberedMode) {
             if (label) GadgetStaticTextSetText(label, UnicodeString(L"\u0421\u0433\u043b\u0430\u0436\u0438\u0432\u0430\u043d\u0438\u0435"));
         }
         const Int gap = MAX(2, height / 5), buttonWidth = width / 4;
+        // Popups must be siblings of the settings panels, rather than children
+        // of VideoParent, whose entire subtree is drawn underneath those panels.
+        GameWindow* overlayParent = prototype->winGetOwner();
+        Int screenX, screenY, parentX, parentY;
+        comboBoxAntiAliasing->winGetScreenPosition(&screenX, &screenY);
+        overlayParent->winGetScreenPosition(&parentX, &parentY);
+        comboBoxAntiAliasing->winSetParent(overlayParent);
+        x = screenX - parentX; y = screenY - parentY;
+        comboBoxAntiAliasing->winSetPosition(x, y);
         WinInstanceData instance;
         instance.m_style = GWS_PUSH_BUTTON | GWS_MOUSE_TRACK;
         instance.m_id = id;
@@ -70,16 +88,18 @@ static void createNeuralToggle(const AsciiString& rememberedMode) {
         if (!neuralToggleButton) return;
         neuralToggleButton->winSetOwner(prototype->winGetOwner());
         neuralToggleButton->winHide(comboBoxAntiAliasing->winIsHidden());
-        neuralToggleButton->winSetTooltip(UnicodeString(L"\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0438\u043b\u0438 \u0432\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c DLAA/DLSS. \u0420\u0435\u0436\u0438\u043c \u0432\u044b\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044f \u0432 \u0441\u043f\u0438\u0441\u043a\u0435 \u0441\u043b\u0435\u0432\u0430. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c\u00bb, \u0447\u0442\u043e\u0431\u044b \u043f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c."));
+        neuralToggleButton->winSetTooltip(UnicodeString(L"\u0412\u041a\u041b: DLSS/DLAA. \u0412\u042b\u041a\u041b: \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u043e\u0435 \u0441\u0433\u043b\u0430\u0436\u0438\u0432\u0430\u043d\u0438\u0435 MSAA. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c\u00bb."));
         comboBoxAntiAliasing->winSetSize(width - buttonWidth - gap, height);
         TheWindowManager->winSendSystemMsg(comboBoxAntiAliasing, GGM_RESIZED, width - buttonWidth - gap, height);
     }
+    comboBoxAntiAliasing->winBringToTop();
+    GadgetComboBoxSetMaxDisplay(comboBoxAntiAliasing, OptionPreferences::AntiAliasingMode_Count + 2);
     updateNeuralToggle();
 }
 static void toggleNeuralSelection() {
     Int choice = -1; GadgetComboBoxGetSelectedPos(comboBoxAntiAliasing, &choice);
     if (isNeuralChoice(choice)) {
-        rememberedNeuralChoice = choice; choice = 0;
+        rememberedNeuralChoice = choice; choice = rememberedStandardChoice;
     } else {
         choice = rememberedNeuralChoice;
         if (!TheDisplay->supportsNeuralAA(neuralModeForChoice(choice))) return;
@@ -109,5 +129,7 @@ static Bool applyNeuralSelection(OptionPreferences& preferences) {
     } else return FALSE;
     preferences["NeuralAntiAliasingLastMode"] =
         rememberedNeuralChoice == OptionPreferences::AntiAliasingMode_Count ? "DLSSQuality" : "DLAA";
+    AsciiString standard; standard.format("%d", rememberedStandardChoice);
+    preferences["NeuralAntiAliasingLastStandard"] = standard;
     lastAntiAliasingChoice = choice; updateNeuralToggle(); return TRUE;
 }

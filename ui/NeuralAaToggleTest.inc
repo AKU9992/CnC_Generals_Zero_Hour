@@ -4,7 +4,7 @@ void generalsTestNeuralToggleTick() {
     if(!enabled) return;
     static DWORD next=GetTickCount()+5000;
     static Int stage=0;
-    if(stage>=8 || GetTickCount()<next || TheGlobalData->m_loadScreenRender) return;
+    if(stage>=9 || GetTickCount()<next || TheGlobalData->m_loadScreenRender) return;
     next=GetTickCount()+1500;
     auto record=[](const char* label,Bool passed) {
         FILE* file=nullptr;
@@ -29,9 +29,16 @@ void generalsTestNeuralToggleTick() {
         TheWindowManager->winSendSystemMsg(neuralToggleButton->winGetOwner(),GCM_SELECTED,
             reinterpret_cast<WindowMsgData>(comboBoxAntiAliasing),0);
     };
-    if(stage==0) choose(OptionPreferences::AntiAliasingMode_Count+1);
+    if(stage==0) { choose(OptionPreferences::AntiAliasingMode_MSAA_8X); choose(OptionPreferences::AntiAliasingMode_Count+1); }
     else if(stage==3) choose(OptionPreferences::AntiAliasingMode_Count);
-    else click();
+    else if(stage<8) click();
+    else {
+        comboBoxAntiAliasing->winBringToTop();
+        TheWindowManager->winSendInputMsg(comboBoxAntiAliasing,GWM_LEFT_UP,0,0);
+        record("dropdown open above settings panels",!GadgetComboBoxGetListBox(comboBoxAntiAliasing)->winIsHidden() &&
+            comboBoxAntiAliasing->winGetParent()==neuralToggleButton->winGetOwner());
+        record("toggle integration completed",TRUE); ++stage; return;
+    }
     const Bool applied=applyNeuralSelection(*pref);
     const auto expected=(stage==1 || stage==4 || stage==6) ? Display::NEURAL_AA_OFF:
         stage<3 ? Display::NEURAL_AA_DLAA:Display::NEURAL_AA_DLSS_QUALITY;
@@ -39,6 +46,7 @@ void generalsTestNeuralToggleTick() {
         expected==Display::NEURAL_AA_DLAA ? "DLAA":"DLSSQuality";
     char label[100]; sprintf_s(label,"stage %d renderer and pending preference",stage);
     record(label,applied && TheDisplay->getNeuralAAMode()==expected && (*pref)["NeuralAntiAliasing"]==expectedPreference);
+    if(expected==Display::NEURAL_AA_OFF) record("standard MSAA restored",(*pref)["AntiAliasing"]=="8" && TheWritableGlobalData->m_antiAliasLevel==8);
     if(stage==6) {
         pref->write();
         OptionPreferences saved;
@@ -49,12 +57,11 @@ void generalsTestNeuralToggleTick() {
         reopened->runInit(); reopened->hide(FALSE); reopened->bringForward();
 
         Int choice=-1; GadgetComboBoxGetSelectedPos(comboBoxAntiAliasing,&choice);
-        record("reopened menu restores disabled state and remembered DLSS",choice==0 && rememberedNeuralChoice==OptionPreferences::AntiAliasingMode_Count);
+        record("reopened menu restores standard AA and remembered DLSS",choice==OptionPreferences::AntiAliasingMode_MSAA_8X && rememberedNeuralChoice==OptionPreferences::AntiAliasingMode_Count);
     }
     if(stage==7) {
         pref->write(); OptionPreferences saved;
         record("enabled DLSS state persisted",saved["NeuralAntiAliasing"]=="DLSSQuality" && saved["AntiAliasing"]=="0");
-        record("toggle integration completed",TRUE);
     }
     ++stage;
 }

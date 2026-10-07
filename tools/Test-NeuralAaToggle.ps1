@@ -17,10 +17,13 @@ try {
     $pidLog=($log -split "`n"|Where-Object{$_.StartsWith("PID $($probe.processId):")}) -join "`n"
     $pidLog | Set-Content -LiteralPath (Join-Path $repositoryPath '.build\neural-aa-toggle-test.log') -Encoding UTF8
     if($pidLog.Contains('FAIL:') -or -not $pidLog.Contains('PASS: toggle integration completed')){throw ('Neural AA menu toggle test failed: '+$pidLog)}
+    foreach($check in @('standard MSAA restored','reopened menu restores standard AA and remembered DLSS','dropdown open above settings panels')) {
+        if(-not $pidLog.Contains('PASS: '+$check)){throw ('Missing menu regression check: '+$check)}
+    }
     if(-not $probe.renderedFrameVerified -or -not $probe.nativeOutputReadbackVerified){throw 'The menu output frame was not verified.'}
     $menuFrame=Join-Path $repositoryPath '.build\neural-aa-toggle-menu.bmp'
     Copy-Item -LiteralPath $probe.renderedFramePath -Destination $menuFrame -Force
-    [ordered]@{executableSha256=$probe.executableSha256;bridgeSha256=$probe.bridgeSha256;toggleCallbacksVerified=$true;dlaaOffOnVerified=$true;dlssOffOnVerified=$true;preferencePersistenceVerified=$true;reopenedMenuVerified=$true;audioVerified=$probe.audioOutputVerified;gracefulExitVerified=$probe.gracefulExitVerified;menuFrame=$menuFrame;log=$pidLog} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repositoryPath '.build\neural-aa-toggle-validation.json') -Encoding UTF8
+    [ordered]@{executableSha256=$probe.executableSha256;bridgeSha256=$probe.bridgeSha256;toggleCallbacksVerified=$true;standardAaRestoredVerified=$true;dropdownOverlayVerified=$true;dlaaOffOnVerified=$true;dlssOffOnVerified=$true;preferencePersistenceVerified=$true;reopenedMenuVerified=$true;audioVerified=$probe.audioOutputVerified;gracefulExitVerified=$probe.gracefulExitVerified;menuFrame=$menuFrame;log=$pidLog} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repositoryPath '.build\neural-aa-toggle-validation.json') -Encoding UTF8
     Write-Output $pidLog
 } finally {
     $env:GENERALS_TEST_NEURAL_TOGGLE=$previousTest
