@@ -49,6 +49,7 @@
 #include "Common/CDManager.h"
 #include "Common/GlobalData.h"
 #include "Common/PerfTimer.h"
+#include "Common/FramePerformanceLog.h"
 #include "Common/RandomValue.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/ModuleFactory.h"
@@ -609,6 +610,7 @@ extern HWND ApplicationHWnd;
  */
 void GameEngine::execute( void )
 {
+	FramePerformanceLog performanceLog(TheGlobalData->m_userDataDir.str());
 	
 	DWORD prevTime = timeGetTime();
 #if defined(_DEBUG) || defined(_INTERNAL)
@@ -618,6 +620,7 @@ void GameEngine::execute( void )
 	// pretty basic for now
 	while( !m_quitting )
 	{
+		performanceLog.beginFrame();
 
 		//if (TheGlobalData->m_vTune)
 		{
@@ -655,6 +658,7 @@ void GameEngine::execute( void )
 				{
 					// compute a frame
 					update();
+					performanceLog.endUpdate();
 				}
 				catch (INIException e)
 				{
@@ -692,7 +696,10 @@ void GameEngine::execute( void )
 
 					// limit the framerate
 					DWORD now = timeGetTime();
-					DWORD limit = (1000.0f/m_maxFPS)-1;
+					// Preserve legacy pacing for valid limits; avoid division by zero
+					// and unsigned underflow for invalid or sub-millisecond limits.
+					DWORD limit = (m_maxFPS > 0 && m_maxFPS < 1000)
+					    ? (DWORD)(1000.0f / m_maxFPS) - 1 : 0;
 					while (TheGlobalData->m_useFpsLimit && (now - prevTime) < limit) 
 					{
 						::Sleep(0);
@@ -715,6 +722,7 @@ void GameEngine::execute( void )
 			PerfGather::resetAll();
 		}
 #endif
+		performanceLog.endFrame(TheGameLogic->getFrame(), TheGameLogic->isInGame());
 
 	}
 

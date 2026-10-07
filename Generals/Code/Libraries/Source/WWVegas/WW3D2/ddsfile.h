@@ -1,3 +1,5 @@
+#include <cstdint>
+#include <cstddef>
 /*
 **	Command & Conquer Generals(tm)
 **	Copyright 2025 Electronic Arts Inc.
@@ -135,7 +137,7 @@ struct LegacyDDSURFACEDESC2 {
 	};
 	unsigned AlphaBitDepth;
 	unsigned Reserved;
-	void* Surface;
+	uint32_t Surface; // Serialized DX7 pointer slot is always four bytes.
 	union
 	{
 		LegacyDDCOLORKEY CKDestOverlay;
@@ -148,6 +150,10 @@ struct LegacyDDSURFACEDESC2 {
 	LegacyDDSCAPS2 Caps;
 	unsigned TextureStage;
 };
+
+static_assert(sizeof(LegacyDDSURFACEDESC2) == 124, "DDS file header must retain its 32-bit disk layout");
+static_assert(offsetof(LegacyDDSURFACEDESC2, PixelFormat) == 72);
+static_assert(offsetof(LegacyDDSURFACEDESC2, Caps) == 104);
 
 // ----------------------------------------------------------------------------
 //

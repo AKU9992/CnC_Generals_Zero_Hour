@@ -1626,8 +1626,18 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 
 	if (selectedResIndex == -1)	//check if saved mode no longer available
 	{	//pick default resolution
-		selectedXRes = 800;
-		selectedXRes = 600;
+		// The monitor may not expose 800x600. Use the actual fallback entry.
+		if (numResolutions > 0)
+		{
+			Int bitDepth;
+			TheDisplay->getDisplayModeDescription(defaultResIndex, &selectedXRes, &selectedYRes, &bitDepth);
+		}
+		else
+		{
+			selectedXRes = TheDisplay->getWidth();
+			selectedYRes = TheDisplay->getHeight();
+			defaultResIndex = -1;
+		}
 		selectedResIndex = defaultResIndex;
 	}
 

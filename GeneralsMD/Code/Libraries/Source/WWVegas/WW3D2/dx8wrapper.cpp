@@ -888,6 +888,12 @@ void DX8Wrapper::Get_Format_Name(unsigned int format, StringClass *tex_format)
 bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int windowed,
 								   bool resize_window,bool reset_device, bool restore_assets)
 {
+	// Device enumeration can succeed without finding a usable adapter.
+	// Report failure instead of indexing an empty table in release builds.
+	if (!IsInitted || dev < -1 || dev >= _RenderDeviceNameTable.Count()
+	    || (dev == -1 && (CurRenderDevice < -1 || CurRenderDevice >= _RenderDeviceNameTable.Count()))
+	    || _RenderDeviceNameTable.Count() == 0)
+		return false;
 	WWASSERT(IsInitted);
 	WWASSERT(dev >= -1);
 	WWASSERT(dev < _RenderDeviceNameTable.Count());
@@ -991,7 +997,8 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 
 		D3DDISPLAYMODE desktop_mode;
 		::ZeroMemory(&desktop_mode, sizeof(D3DDISPLAYMODE));
-		D3DInterface->GetAdapterDisplayMode( CurRenderDevice, &desktop_mode );
+		if (FAILED(D3DInterface->GetAdapterDisplayMode( CurRenderDevice, &desktop_mode )))
+			return false;
 
 		DisplayFormat=_PresentParameters.BackBufferFormat = desktop_mode.Format;
 
@@ -1039,8 +1046,9 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 		/*
 		** Try to find a mode that matches the user's desired bit-depth.
 		*/
-		Find_Color_And_Z_Mode(ResolutionWidth,ResolutionHeight,BitDepth,&DisplayFormat,
-			&_PresentParameters.BackBufferFormat,&_PresentParameters.AutoDepthStencilFormat);
+		if (!Find_Color_And_Z_Mode(ResolutionWidth,ResolutionHeight,BitDepth,&DisplayFormat,
+			&_PresentParameters.BackBufferFormat,&_PresentParameters.AutoDepthStencilFormat))
+			return false;
 	}
 
 	/*

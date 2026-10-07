@@ -36,6 +36,18 @@
 //#pragma MESSAGE("************************************** WARNING, optimization disabled for debugging purposes")
 #endif
 
+// generals-mods legacy EA registry view: retail installers remain 32-bit.
+static REGSAM legacyEARegistryAccess(const AsciiString& path, REGSAM access)
+{
+#if defined(_WIN64)
+    const char prefix[] = "SOFTWARE\\Electronic Arts\\";
+    if (_strnicmp(path.str(), prefix, sizeof(prefix) - 1) == 0)
+        access |= KEY_WOW64_32KEY;
+#else
+    (void)path;
+#endif
+    return access;
+}
 Bool  getStringFromRegistry(HKEY root, AsciiString path, AsciiString key, AsciiString& val)
 {
 	HKEY handle;
@@ -44,7 +56,7 @@ Bool  getStringFromRegistry(HKEY root, AsciiString path, AsciiString key, AsciiS
 	unsigned long type;
 	int returnValue;
 
-	if ((returnValue = RegOpenKeyEx( root, path.str(), 0, KEY_READ, &handle )) == ERROR_SUCCESS)
+	if ((returnValue = RegOpenKeyEx( root, path.str(), 0, legacyEARegistryAccess(path, KEY_READ), &handle )) == ERROR_SUCCESS)
 	{
 		returnValue = RegQueryValueEx(handle, key.str(), NULL, &type, (unsigned char *) &buffer, &size);
 		RegCloseKey( handle );
@@ -67,7 +79,7 @@ Bool getUnsignedIntFromRegistry(HKEY root, AsciiString path, AsciiString key, Un
 	unsigned long type;
 	int returnValue;
 
-	if ((returnValue = RegOpenKeyEx( root, path.str(), 0, KEY_READ, &handle )) == ERROR_SUCCESS)
+	if ((returnValue = RegOpenKeyEx( root, path.str(), 0, legacyEARegistryAccess(path, KEY_READ), &handle )) == ERROR_SUCCESS)
 	{
 		returnValue = RegQueryValueEx(handle, key.str(), NULL, &type, (unsigned char *) &buffer, &size);
 		RegCloseKey( handle );

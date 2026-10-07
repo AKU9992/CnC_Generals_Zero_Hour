@@ -669,7 +669,12 @@ static Bool initializeAppWindows( HINSTANCE hInstance, Int nCmdShow, Bool runWin
                        NULL/*LoadCursor(NULL, IDC_ARROW)*/, 
                        (HBRUSH)GetStockObject(BLACK_BRUSH), NULL,
 	                     TEXT("Game Window") };
-  RegisterClass( &wndClass );
+  if (!RegisterClass( &wndClass ) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+  {
+    MessageBoxA(NULL, "Could not register the game window class.",
+                "Generals startup error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    return false;
+  }
 
    // Create our main window
 	windowStyle =  WS_POPUP|WS_VISIBLE;
@@ -709,6 +714,14 @@ static Bool initializeAppWindows( HINSTANCE hInstance, Int nCmdShow, Bool runWin
 														hInstance, 
 														0L );
 
+
+	if (!hWnd)
+	{
+		gInitializing = false;
+		MessageBoxA(NULL, "Could not create the game window.",
+		            "Generals startup error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+		return false;
+	}
 
 	if (!runWindowed)
 	{	SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,SWP_NOSIZE |SWP_NOMOVE);
@@ -853,6 +866,7 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
                       LPSTR lpCmdLine, Int nCmdShow )
 {
 	checkProtection();
+	Int exitCode = 0;
 
 	try {
 
@@ -872,19 +886,25 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		TheDebugLogCriticalSection = &critSec5;
 
 		/// @todo remove this force set of working directory later
-		Char buffer[ _MAX_PATH ];
-		GetModuleFileName( NULL, buffer, sizeof( buffer ) );
-		Char *pEnd = buffer + strlen( buffer );
-		while( pEnd != buffer ) 
+		Char buffer[ _MAX_PATH ] = { 0 };
+		DWORD pathLength = GetModuleFileNameA( NULL, buffer, sizeof( buffer ) );
+		if (pathLength == 0 || pathLength >= sizeof( buffer ))
 		{
-			if( *pEnd == '\\' ) 
-			{
-				*pEnd = 0;
-				break;
-			}
-			pEnd--;
+			MessageBoxA(NULL, "Could not read the game executable path. Try installing in a shorter path.",
+			            "Generals startup error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+			return 1;
 		}
-		::SetCurrentDirectory(buffer);
+		Char *pEnd = strrchr( buffer, '\\' );
+		if (pEnd == NULL)
+			return 1;
+		// Keep the separator so an executable in a drive root uses C:\\, not C:.
+		pEnd[1] = 0;
+		if (!::SetCurrentDirectoryA(buffer))
+		{
+			MessageBoxA(NULL, "Could not access the game installation directory.",
+			            "Generals startup error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+			return 1;
+		}
 
 
 		/*
@@ -941,7 +961,7 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 		// register windows class and create application window
 		if( initializeAppWindows( hInstance, nCmdShow, ApplicationIsWindowed) == false )
-			return 0;
+			return 1;
 
 		if (gLoadScreenBitmap!=NULL) {
 			::DeleteObject(gLoadScreenBitmap);
@@ -1044,7 +1064,9 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	}	
 	catch (...) 
 	{ 
-	
+		MessageBoxA(NULL, "The game stopped because of an unexpected error. Check the game crash report for details.",
+		            "Generals error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+		exitCode = 1;
 	}
 
 	TheAsciiStringCriticalSection = NULL;
@@ -1052,7 +1074,7 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	TheDmaCriticalSection = NULL;
 	TheMemoryPoolCriticalSection = NULL;
 
-	return 0;
+	return exitCode;
 
 }  // end WinMain
 

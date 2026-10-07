@@ -469,17 +469,14 @@ W3DDisplay::~W3DDisplay()
 }  // end ~W3DDisplay
 
 #define MIN_DISPLAY_RESOLUTION_X	800
-#define MIN_DISPLAY_RESOLUTOIN_Y	600
+#define MIN_DISPLAY_RESOLUTION_Y	600
 
 
-Bool IS_FOUR_BY_THREE_ASPECT( Real x, Real y )
+static Bool isSupportedDisplayMode(const ResolutionDescClass &resolution)
 {
-  if ( y == 0 )
-    return FALSE;
-  
-  Real aspectRatio = fabs( x / y ); 
-  return (( aspectRatio > 1.332f) && ( aspectRatio < 1.334f));
-  
+	return resolution.BitDepth >= 24
+	    && resolution.Width >= MIN_DISPLAY_RESOLUTION_X
+	    && resolution.Height >= MIN_DISPLAY_RESOLUTION_Y;
 }
 
 
@@ -506,8 +503,7 @@ Int W3DDisplay::getDisplayModeCount(void)
 	for (int res = 0; res < resolutions.Count ();  res ++)
 	{
 		// Is this the resolution we are looking for?
-		if (resolutions[res].BitDepth >= 24 && resolutions[res].Width >= MIN_DISPLAY_RESOLUTION_X 
-      && IS_FOUR_BY_THREE_ASPECT( (Real)resolutions[res].Width, (Real)resolutions[res].Height ) )	//only accept 4:3 aspect ratio modes.
+		if (isSupportedDisplayMode(resolutions[res]))
 		{	
 			numResolutions++;
 		}
@@ -525,8 +521,7 @@ void W3DDisplay::getDisplayModeDescription(Int modeIndex, Int *xres, Int *yres, 
 	for (int res = 0; res < resolutions.Count ();  res ++)
 	{
 		// Is this the resolution we are looking for?
-		if ( resolutions[res].BitDepth >= 24 && resolutions[res].Width >= MIN_DISPLAY_RESOLUTION_X 
-      && IS_FOUR_BY_THREE_ASPECT( (Real)resolutions[res].Width, (Real)resolutions[res].Height ) )	//only accept 4:3 aspect ratio modes.
+		if (isSupportedDisplayMode(resolutions[res]))
 		{	
 			if (numResolutions == modeIndex)
 			{	//found the mode
@@ -752,12 +747,42 @@ void W3DDisplay::init( void )
 	setHeight( TheGlobalData->m_yResolution );
 	setBitDepth( W3D_DISPLAY_DEFAULT_BIT_DEPTH );
 
-	if( WW3D::Set_Render_Device( 0, 
+	Bool renderDeviceReady = (WW3D::Set_Render_Device( 0,
 															 getWidth(), 
 															 getHeight(), 
 															 getBitDepth(), 
 															 getWindowed(), 
-															 true ) != WW3D_ERROR_OK ) 
+															 true ) == WW3D_ERROR_OK);
+
+	// A saved resolution (or the 800x600 default) may not be available on
+	// the current monitor. Try its current physical resolution at 32 bits
+	// before the legacy 16-bit fallback. Do not override a working mode.
+	if (!renderDeviceReady && !getWindowed())
+	{
+		DEVMODEA desktopMode;
+		ZeroMemory(&desktopMode, sizeof(desktopMode));
+		desktopMode.dmSize = sizeof(desktopMode);
+		if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &desktopMode)
+		    && desktopMode.dmPelsWidth >= MIN_DISPLAY_RESOLUTION_X
+		    && desktopMode.dmPelsHeight >= MIN_DISPLAY_RESOLUTION_Y
+		    && (desktopMode.dmPelsWidth != getWidth() || desktopMode.dmPelsHeight != getHeight()))
+		{
+			renderDeviceReady = (WW3D::Set_Render_Device(0, desktopMode.dmPelsWidth,
+			                    desktopMode.dmPelsHeight, 32, false, true) == WW3D_ERROR_OK);
+			if (renderDeviceReady)
+			{
+				setWidth(desktopMode.dmPelsWidth);
+				setHeight(desktopMode.dmPelsHeight);
+				setBitDepth(32);
+				TheWritableGlobalData->m_xResolution = getWidth();
+				TheWritableGlobalData->m_yResolution = getHeight();
+				DEBUG_LOG(("Startup: using desktop resolution %u x %u after requested mode failed.\n",
+				           getWidth(), getHeight()));
+			}
+		}
+	}
+
+	if (!renderDeviceReady)
 	{
 		// Getting the device at the default bit depth (32) didn't work, so try
 		// getting a 16 bit display.  (Voodoo 1-3 only supported 16 bit.) jba.
@@ -772,7 +797,7 @@ void W3DDisplay::init( void )
 
 			WW3D::Shutdown();
 			WWMath::Shutdown();
-			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
+			throw ERROR_INVALID_D3D;	// None of the attempted display modes could be initialized.
 			DEBUG_ASSERTCRASH( 0, ("Unable to set render device\n") );
 			return;
 		}
@@ -883,6 +908,11 @@ void W3DDisplay::updateAverageFPS(void)
 
 	Int64 freq64 = getPerformanceCounterFrequency();
 	Int64 time64 = getPerformanceCounter();
+	if (freq64 <= 0 || lastUpdateTime64 == 0)
+	{
+		lastUpdateTime64 = time64;
+		return;
+	}
 
 #if defined(_DEBUG) || defined(_INTERNAL)
 	if (TheGameLogic->getFrame() == START_CUMU_FRAME)
@@ -896,7 +926,7 @@ void W3DDisplay::updateAverageFPS(void)
 	// convert elapsed time to seconds
 	double elapsedSeconds = (double)timeDiff/(double)(freq64);
 
-	if (elapsedSeconds <= MaximumFrameTimeCutoff)	//make sure it's not a spike
+	if (elapsedSeconds > 0.0 && elapsedSeconds <= MaximumFrameTimeCutoff)
 	{
 		// append new sameple to fps history.
 		if (historyOffset >= FPS_HISTORY_SIZE)
