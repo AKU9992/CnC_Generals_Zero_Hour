@@ -15,6 +15,7 @@ extern "C" __declspec(dllexport) void WINAPI GeneralsNeuralShutdown(IDirect3DDev
 }
 void neuralBeforePresent(IDirect3DDevice9* device) {neuralRenderer(device).beforePresent();}
 void neuralAfterPresent(IDirect3DDevice9* device) {neuralRenderer(device).afterPresent();}
+HRESULT neuralNativePresent(IDirect3DDevice9* device) {return neuralRenderer(device).nativePresent();}
 static NeuralRenderer9* renderer(IDirect3DDevice8* device) {
     return device ? &neuralRenderer(static_cast<Direct3DDevice8*>(device)->GetProxyInterface()):nullptr;
 }

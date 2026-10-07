@@ -1,5 +1,6 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$SourcePath)
+param([Parameter(Mandatory)][string]$SourcePath, [ValidateSet('Generals','GeneralsMD')][string]$GameEdition='GeneralsMD')
+$editionSourcePath = Join-Path $SourcePath $GameEdition
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 $expectedPath = Join-Path $repositoryPath '.build\community-reference\GeneralsGameCode-b805c12ee1aedc0a4b241006803b8e04bbf288a6'
@@ -7,7 +8,7 @@ $expectedX64Path = Join-Path $repositoryPath '.build\community-reference-x64\Gen
 if ([IO.Path]::GetFullPath($SourcePath).TrimEnd('\') -notin @([IO.Path]::GetFullPath($expectedPath).TrimEnd('\'), [IO.Path]::GetFullPath($expectedX64Path).TrimEnd('\'))) {
     throw 'Only the pinned reference checkout may be patched.'
 }
-$enginePath = Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\Common\GameEngine.cpp'
+$enginePath = Join-Path $editionSourcePath 'Code\GameEngine\Source\Common\GameEngine.cpp'
 $engineText = [IO.File]::ReadAllText($enginePath)
 if ($engineText.Contains('// generals-mods experimental FPS hook')) {
     $fixedText = $engineText.Replace('FramePerformanceLog performanceLog(TheGlobalData->m_userDataDir.str());', 'FramePerformanceLog performanceLog(TheGlobalData->getPath_UserData().str());')

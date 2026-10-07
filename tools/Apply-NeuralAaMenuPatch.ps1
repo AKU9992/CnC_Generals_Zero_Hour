@@ -1,5 +1,6 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$SourcePath)
+param([Parameter(Mandatory)][string]$SourcePath, [ValidateSet('Generals','GeneralsMD')][string]$GameEdition='GeneralsMD')
+$editionSourcePath = Join-Path $SourcePath $GameEdition
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 $expectedPath = Join-Path $repositoryPath '.build\community-reference-x64\GeneralsGameCode-b805c12ee1aedc0a4b241006803b8e04bbf288a6'
@@ -19,9 +20,12 @@ if (-not $display.Contains('supportsNeuralAA')) {
 '@)
     [IO.File]::WriteAllText($displayPath, $display)
 }
-$menuPath = Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\GameClient\GUI\GUICallbacks\Menus\OptionsMenu.cpp'
+$menuPath = Join-Path $editionSourcePath 'Code\GameEngine\Source\GameClient\GUI\GUICallbacks\Menus\OptionsMenu.cpp'
 $menu = [IO.File]::ReadAllText($menuPath)
-if ($menu.Contains('// generals-mods neural AA selection')) { return }
+$menu = $menu.Replace('elseif (controlID', 'else if (controlID')
+$menu = $menu.Replace('L"NVIDIA DLSS Quality"', 'L"DLSS Quality"').Replace('L"NVIDIA DLAA"', 'L"DLAA"')
+[IO.File]::WriteAllText($menuPath,$menu)
+if ($menu.Contains('// generals-mods neural AA selection') -or $menu.Contains('#include "NeuralAaToggle.inc"')) { return }
 $anchor = 'static GameWindow *   comboBoxAntiAliasing     = nullptr;'
 if (-not $menu.Contains($anchor)) { throw 'Unexpected AA control declaration.' }
 $menu = $menu.Replace($anchor, $anchor + @'
@@ -72,12 +76,12 @@ $menu = $menu.Replace($anchor, @'
         const Display::NeuralAAMode mode = neuralModeForChoice(OptionPreferences::AntiAliasingMode_Count + neuralIndex);
         const Bool available = TheDisplay->supportsNeuralAA(mode);
         const wchar_t* label = neuralIndex == 0
-            ? (available ? L"NVIDIA DLSS Quality" : L"NVIDIA DLSS Quality (unavailable)")
-            : (available ? L"NVIDIA DLAA" : L"NVIDIA DLAA (unavailable)");
+            ? (available ? L"DLSS Quality" : L"NVIDIA DLSS Quality (unavailable)")
+            : (available ? L"DLAA" : L"NVIDIA DLAA (unavailable)");
         GadgetComboBoxAddEntry(comboBoxAntiAliasing, UnicodeString(label), available ? color : GameMakeColor(128,128,128,255));
     }
 
-'@ + $anchor)
+'@ + "`n" + $anchor)
 $anchor = 'GadgetComboBoxSetSelectedPos(comboBoxAntiAliasing, pos);'
 $menu = $menu.Replace($anchor, @'
     const Display::NeuralAAMode activeMode = TheDisplay->getNeuralAAMode();
@@ -98,6 +102,6 @@ if (controlID == comboBoxAntiAliasingID)
                         lastAntiAliasingChoice = choice;
                 }
                 else
-'@ + $anchor)
+'@ + "`n" + $anchor)
 [IO.File]::WriteAllText($menuPath, $menu)
 Write-Output 'Added separate DLSS Quality and DLAA choices with renderer availability checks.'

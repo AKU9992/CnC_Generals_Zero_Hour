@@ -1,10 +1,11 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$SourcePath)
+param([Parameter(Mandatory)][string]$SourcePath, [ValidateSet('Generals','GeneralsMD')][string]$GameEdition='GeneralsMD')
+$editionSourcePath = Join-Path $SourcePath $GameEdition
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 $expectedPath = Join-Path $repositoryPath '.build\community-reference-x64\GeneralsGameCode-b805c12ee1aedc0a4b241006803b8e04bbf288a6'
 if ([IO.Path]::GetFullPath($SourcePath).TrimEnd('\') -ne [IO.Path]::GetFullPath($expectedPath).TrimEnd('\')) { throw 'Only the pinned x64 menu may be patched.' }
-$path = Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\GameClient\GUI\GUICallbacks\Menus\OptionsMenu.cpp'
+$path = Join-Path $editionSourcePath 'Code\GameEngine\Source\GameClient\GUI\GUICallbacks\Menus\OptionsMenu.cpp'
 $text = [IO.File]::ReadAllText($path)
 # Migrate existing builds back to the full-width AA dropdown.
 $text = [regex]::Replace($text, '(?s)// generals-mods separate neural AA buttons.*?(?=static Display::NeuralAAMode)', '')

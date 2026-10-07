@@ -4,6 +4,7 @@
 #if defined(_WIN64)
 void neuralBeforePresent(IDirect3DDevice9* device);
 void neuralAfterPresent(IDirect3DDevice9* device);
+HRESULT neuralNativePresent(IDirect3DDevice9* device);
 #endif
 
 // Transitional renderer: the legacy W3D interface is translated to D3D12.
@@ -44,13 +45,60 @@ inline HRESULT validateD3D12Device(IDirect3DDevice9* device)
     return result;
 }
 
+inline void bridgeCaptureFrame(IDirect3DDevice9* device)
+{
+    char path[MAX_PATH] = {};
+    if (!GetEnvironmentVariableA("GENERALS_CAPTURE_FRAME", path, MAX_PATH)) return;
+    static DWORD lastCapture = GetTickCount();
+    if (GetTickCount() - lastCapture < 5000) return;
+    lastCapture = GetTickCount();
+    IDirect3DSurface9 *back = nullptr, *copy = nullptr;
+    D3DSURFACE_DESC desc = {};
+    HRESULT result = device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &back);
+    if (SUCCEEDED(result)) result = back->GetDesc(&desc);
+    if (SUCCEEDED(result)) result = device->CreateOffscreenPlainSurface(desc.Width, desc.Height,
+        desc.Format, D3DPOOL_SYSTEMMEM, &copy, nullptr);
+    if (SUCCEEDED(result)) result = device->GetRenderTargetData(back, copy);
+    D3DLOCKED_RECT pixels = {};
+    if (SUCCEEDED(result)) result = copy->LockRect(&pixels, nullptr, D3DLOCK_READONLY);
+    if (SUCCEEDED(result)) {
+        FILE* file = nullptr;
+        if (fopen_s(&file, path, "wb") == 0 && file) {
+            BITMAPFILEHEADER header = {};
+            BITMAPINFOHEADER info = {};
+            header.bfType = 0x4d42;
+            header.bfOffBits = sizeof(header) + sizeof(info);
+            header.bfSize = header.bfOffBits + desc.Width * desc.Height * 4;
+            info.biSize = sizeof(info); info.biWidth = desc.Width;
+            info.biHeight = -static_cast<LONG>(desc.Height);
+            info.biPlanes = 1; info.biBitCount = 32; info.biCompression = BI_RGB;
+            fwrite(&header, sizeof(header), 1, file); fwrite(&info, sizeof(info), 1, file);
+            for (unsigned y = 0; y < desc.Height; ++y)
+                fwrite(static_cast<const char*>(pixels.pBits) + y * pixels.Pitch, 4, desc.Width, file);
+            fclose(file);
+        }
+        copy->UnlockRect();
+    }
+    if (copy) copy->Release();
+    if (back) back->Release();
+    bridgeLog("Diagnostic backbuffer capture", result);
+}
+
 inline HRESULT bridgePresent(IDirect3DDevice9* device, const RECT* source,
     const RECT* destination, HWND window)
 {
 #if defined(_WIN64)
     neuralBeforePresent(device);
 #endif
-    const HRESULT result = device->Present(source, destination, window, nullptr);
+    bridgeCaptureFrame(device);
+    HRESULT result;
+#if defined(_WIN64)
+    char nativeOutput[8]={};
+    const bool native=GetEnvironmentVariableA("GENERALS_NATIVE_PRESENT",nativeOutput,sizeof(nativeOutput)) && nativeOutput[0]=='1';
+    result=native ? neuralNativePresent(device):device->Present(source,destination,window,nullptr);
+#else
+    result=device->Present(source,destination,window,nullptr);
+#endif
 #if defined(_WIN64)
     neuralAfterPresent(device);
 #endif
@@ -58,6 +106,18 @@ inline HRESULT bridgePresent(IDirect3DDevice9* device, const RECT* source,
     static bool recorded = false;
     if (!recorded && SUCCEEDED(result))
     {
+        IDirect3DSwapChain9* chain = nullptr;
+        D3DPRESENT_PARAMETERS params = {};
+        if (SUCCEEDED(device->GetSwapChain(0, &chain))) {
+            chain->GetPresentParameters(&params); chain->Release();
+            RECT rect = {}; GetClientRect(params.hDeviceWindow, &rect);
+            char details[256] = {};
+            sprintf_s(details, "Presentation window=%p override=%p visible=%d client=%ldx%ld buffer=%ux%u windowed=%d source=%d destination=%d",
+                params.hDeviceWindow, window, IsWindowVisible(params.hDeviceWindow),
+                rect.right, rect.bottom, params.BackBufferWidth, params.BackBufferHeight,
+                params.Windowed, source != nullptr, destination != nullptr);
+            bridgeLog(details);
+        }
         bridgeLog("First D3D12 presentation", result);
         recorded = true;
     }

@@ -1,11 +1,16 @@
 [CmdletBinding()]
-param([string]$GameDirectory = 'E:\C&C ZH GPTMOD\CaCGZH', [ValidateRange(5,60)][int]$Seconds = 20, [switch]$Installed, [switch]$ShellMap, [switch]$Fullscreen, [switch]$Graceful, [switch]$RequireAudio, [ValidateSet('Off','DLAA','DLSSQuality')][string]$NeuralMode='Off')
+param([string]$GameDirectory = 'E:\C&C ZH GPTMOD\CaCGZH', [ValidateRange(5,60)][int]$Seconds = 20, [switch]$Installed, [switch]$ShellMap, [switch]$Fullscreen, [switch]$Graceful, [switch]$RequireAudio, [ValidateSet('Off','DLAA','DLSSQuality')][string]$NeuralMode='Off', [ValidateSet('ZeroHour','Generals')][string]$Edition='ZeroHour', [int]$Width=0, [int]$Height=0)
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
-$exePath = Join-Path $repositoryPath '.build\game-x64\GeneralsMD\generalszh.exe'
+$vanilla=$Edition -eq 'Generals'
+if($vanilla -and -not $PSBoundParameters.ContainsKey('GameDirectory')){$GameDirectory='E:\C&C ZH GPTMOD\CaCG'}
+$probePrefix=if($vanilla){'generals-x64-game-startup'}else{'x64-game-startup'}
+$audioPrefix=if($vanilla){'audio-session-generals'}else{'audio-session'}
+$exeName=if($vanilla){'generals-x64-test.exe'}else{'generalszh-x64-test.exe'}
+$exePath = Join-Path $repositoryPath $(if($vanilla){'.build\game-generals-x64\Generals\generalsv.exe'}else{'.build\game-x64\GeneralsMD\generalszh.exe'})
 $bridgePath = Join-Path $repositoryPath '.build\d3d12-bridge-x64\generals-d3d12.dll'
 if ($Installed) {
-    $exePath = Join-Path $GameDirectory 'GeneralsGPT-x64\generalszh-x64-test.exe'
+    $exePath = Join-Path $GameDirectory ('GeneralsGPT-x64\'+$exeName)
     $bridgePath = Join-Path $GameDirectory 'GeneralsGPT-x64\generals-d3d12.dll'
 }
 foreach ($path in @($exePath, $bridgePath)) {
@@ -20,6 +25,14 @@ $neuralLogPath=Join-Path $GameDirectory 'GeneralsNeuralAA.log'
 $neuralBeforeLength=if(Test-Path -LiteralPath $neuralLogPath) {[IO.File]::ReadAllText($neuralLogPath).Length} else {0}
 $logPath = Join-Path $GameDirectory 'GeneralsD3D12.log'
 $beforeLength = if (Test-Path -LiteralPath $logPath) { [IO.File]::ReadAllText($logPath).Length } else { 0 }
+$previousCapture = $env:GENERALS_CAPTURE_FRAME
+$previousBorderless = $env:GENERALS_BORDERLESS
+$previousNativePresent = $env:GENERALS_NATIVE_PRESENT
+$capturePath=Join-Path $repositoryPath ('.build/'+$probePrefix+'-'+$NeuralMode+'.bmp')
+$framePath=if($vanilla){$capturePath+'.native.bmp'}else{$capturePath}
+foreach($oldCapture in @($capturePath,$capturePath+'.native.bmp')){if(Test-Path -LiteralPath $oldCapture){Remove-Item -LiteralPath $oldCapture}}
+$env:GENERALS_CAPTURE_FRAME=$capturePath
+if($vanilla){$env:GENERALS_BORDERLESS='1';$env:GENERALS_NATIVE_PRESENT='1'}
 $previousRenderer = $env:GENERALS_RENDERER
 $previousFps = $env:GENERALS_RENDER_FPS
 $previousTrace = $env:GENERALS_X64_STARTUP_TRACE
@@ -34,13 +47,14 @@ $process = $null
 try {
     $arguments = if ($ShellMap) { '-useCwd -win -nologo' } else { '-useCwd -win -quickstart' }
     if($Fullscreen) {$arguments=$arguments.Replace(' -win','')}
-    $process = Start-Process -FilePath $exePath -ArgumentList $arguments -WorkingDirectory $GameDirectory -WindowStyle Hidden -PassThru
+    if($Width -gt 0 -and $Height -gt 0){$arguments+=' -xres '+$Width+' -yres '+$Height}
+    $process = Start-Process -FilePath $exePath -ArgumentList $arguments -WorkingDirectory $GameDirectory -PassThru
     $audioProbe=$null
     $audioVerified=$false
     if($RequireAudio){
         $audioProbeExe=Join-Path $repositoryPath '.build/audio-tests/X64AudioTests.exe'
         if(-not (Test-Path -LiteralPath $audioProbeExe)){throw 'Build Test-X64Audio.ps1 first.'}
-        $audioProbe=Start-Process -FilePath $audioProbeExe -ArgumentList @('--watch',[string]$process.Id) -WorkingDirectory (Split-Path $audioProbeExe -Parent) -WindowStyle Hidden -RedirectStandardOutput (Join-Path $repositoryPath ('.build/audio-session-'+$NeuralMode+'.log')) -RedirectStandardError (Join-Path $repositoryPath ('.build/audio-session-'+$NeuralMode+'-error.log')) -PassThru
+        $audioProbe=Start-Process -FilePath $audioProbeExe -ArgumentList @('--watch',[string]$process.Id) -WorkingDirectory (Split-Path $audioProbeExe -Parent) -WindowStyle Hidden -RedirectStandardOutput (Join-Path $repositoryPath ('.build/'+$audioPrefix+'-'+$NeuralMode+'.log')) -RedirectStandardError (Join-Path $repositoryPath ('.build/'+$audioPrefix+'-'+$NeuralMode+'-error.log')) -PassThru
     }
     $exited = $process.WaitForExit($(if($Graceful) {60000} else {$Seconds * 1000}))
     $gracefulExit = $Graceful -and $exited -and $process.ExitCode -eq 0
@@ -54,8 +68,22 @@ try {
     $neuralLog=if(Test-Path -LiteralPath $neuralLogPath) {[IO.File]::ReadAllText($neuralLogPath)} else {''}
     $neuralLog=if($neuralLog.Length -ge $neuralBeforeLength) {$neuralLog.Substring($neuralBeforeLength)} else {$neuralLog}
     $neuralLog=($neuralLog -split "`n" | Where-Object {$_.StartsWith("PID $($process.Id):")}) -join "`n"
+    $renderedFrameVerified=$false
+    $litPixelFraction=0.0
+    if(Test-Path -LiteralPath $framePath){
+        $frameBytes=[IO.File]::ReadAllBytes($framePath)
+        $pixelOffset=[BitConverter]::ToInt32($frameBytes,10)
+        $lit=0; $sampled=0
+        for($index=$pixelOffset;$index+3 -lt $frameBytes.Length;$index+=64){
+            $sampled++
+            if($frameBytes[$index] -gt 16 -or $frameBytes[$index+1] -gt 16 -or $frameBytes[$index+2] -gt 16){$lit++}
+        }
+        if($sampled){$litPixelFraction=$lit/$sampled; $renderedFrameVerified=$litPixelFraction -gt 0.25}
+    }
     $result = [ordered]@{
         architecture = 'AMD64'
+        edition = $Edition
+        requestedResolution = if($Width -gt 0 -and $Height -gt 0){[string]$Width+'x'+$Height}else{'Options.ini'}
         executable = $exePath
         executableSha256 = (Get-FileHash -LiteralPath $exePath).Hash
         bridgeSha256 = (Get-FileHash -LiteralPath $bridgePath).Hash
@@ -70,6 +98,11 @@ try {
         successfulDraw = $pidLog.Contains('First successful D3D12 draw: 0x00000000')
         successfulPresent = $pidLog.Contains('First D3D12 presentation: 0x00000000')
         visualVerified = $false
+        renderedFrameVerified = $renderedFrameVerified
+        litPixelFraction = $litPixelFraction
+        renderedFramePath = $framePath
+        nativePresentVerified = $pidLog.Contains('32 native DXGI frames presented: 0x00000000')
+        nativeOutputReadbackVerified = $pidLog.Contains('Native DXGI output readback: 0x00000000')
         audioOutputVerified = $audioVerified
         neuralAaIntegrated = $neuralLog.Contains('First actual game neural frame: 0x00000000')
         neuralHistoryVerified = $neuralLog.Contains('32 actual neural frames completed: 0x00000000')
@@ -78,10 +111,13 @@ try {
         bridgeLog = $pidLog
     }
     $json = $result | ConvertTo-Json
-    $json | Set-Content -LiteralPath (Join-Path $repositoryPath '.build\x64-game-startup.json') -Encoding UTF8
-    $json | Set-Content -LiteralPath (Join-Path $repositoryPath ('.build\x64-game-startup-'+$NeuralMode+'.json')) -Encoding UTF8
+    $json | Set-Content -LiteralPath (Join-Path $repositoryPath ('.build\'+$probePrefix+'.json')) -Encoding UTF8
+    $json | Set-Content -LiteralPath (Join-Path $repositoryPath ('.build\'+$probePrefix+'-'+$NeuralMode+'.json')) -Encoding UTF8
     Write-Output $json
 } finally {
+    $env:GENERALS_CAPTURE_FRAME=$previousCapture
+    $env:GENERALS_BORDERLESS=$previousBorderless
+    $env:GENERALS_NATIVE_PRESENT=$previousNativePresent
     if ($process -and -not $process.HasExited) {
         $running = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
         if ($running -and $running.Path -eq $exePath) { Stop-Process -Id $process.Id }

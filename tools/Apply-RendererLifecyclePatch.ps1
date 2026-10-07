@@ -1,5 +1,6 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$SourcePath)
+param([Parameter(Mandatory)][string]$SourcePath, [ValidateSet('Generals','GeneralsMD')][string]$GameEdition='GeneralsMD')
+$editionSourcePath = Join-Path $SourcePath $GameEdition
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $expected=Join-Path $root '.build\community-reference-x64\GeneralsGameCode-b805c12ee1aedc0a4b241006803b8e04bbf288a6'
@@ -13,7 +14,7 @@ if(-not $text.Contains('neuralShutdown(D3DDevice)')) {
     $text=[regex]::Replace($text,[regex]::Escape($anchor)+'\s*\{', $anchor+"`n{`n    // Shut down Streamline outside the DLL loader lock.`n    generals_mods::neuralShutdown(D3DDevice);")
     [IO.File]::WriteAllText($path,$text)
 }
-$path=Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\GameClient\GUI\GUICallbacks\Menus\OptionsMenu.cpp'
+$path=Join-Path $editionSourcePath 'Code\GameEngine\Source\GameClient\GUI\GUICallbacks\Menus\OptionsMenu.cpp'
 $text=[IO.File]::ReadAllText($path)
 if(-not $text.Contains('// Apply MSAA to the current device')) {
     $anchor='Int mode = index > 0 ? 1 << index : 0;'
@@ -31,7 +32,7 @@ if(-not $text.Contains('// Apply MSAA to the current device')) {
 '@)
     [IO.File]::WriteAllText($path,$text)
 }
-$path=Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\Common\GameEngine.cpp'
+$path=Join-Path $editionSourcePath 'Code\GameEngine\Source\Common\GameEngine.cpp'
 $text=[IO.File]::ReadAllText($path)
 if(-not $text.Contains('GENERALS_TEST_QUIT_SECONDS')) {
     $anchor='while( !m_quitting )'
@@ -90,7 +91,7 @@ static void traceSubsystemShutdown(const char* stage, const char* name) {
     $text=$text.Replace('delete sys;', 'traceSubsystemShutdown("start",sys->getName().str());'+"`n"+'        delete sys;'+"`n"+'        traceSubsystemShutdown("done","");')
     [IO.File]::WriteAllText($path,$text)
 }
-$path=Join-Path $SourcePath 'GeneralsMD\Code\Main\WinMain.cpp'
+$path=Join-Path $editionSourcePath 'Code\Main\WinMain.cpp'
 $text=[IO.File]::ReadAllText($path)
 if(-not $text.Contains('GameMain returned')) {
     $helper=@"
@@ -128,7 +129,7 @@ void finishGraphicsLibraryShutdown() {
     $text=$text.Replace('"bridge unload start"','"bridge unload deferred start"').Replace('"bridge unload done"','"bridge unload deferred done"')
     [IO.File]::WriteAllText($path,$text)
 }
-$path=Join-Path $SourcePath 'GeneralsMD\Code\Main\WinMain.cpp'
+$path=Join-Path $editionSourcePath 'Code\Main\WinMain.cpp'
 $text=[IO.File]::ReadAllText($path)
 if(-not $text.Contains('finishGraphicsLibraryShutdown();')) {
     $text=$text.Replace('Int APIENTRY WinMain(', 'extern void finishGraphicsLibraryShutdown();'+"`nInt APIENTRY WinMain(")
@@ -144,12 +145,12 @@ if(-not $text.Contains('// generals-mods pointer-sized object pool header')) {
     [IO.File]::WriteAllText($path,$text)
 }
 # Temporary fault/template probes were used to diagnose teardown. Keep only stage tracing.
-$path=Join-Path $SourcePath 'GeneralsMD\Code\Main\WinMain.cpp'
+$path=Join-Path $editionSourcePath 'Code\Main\WinMain.cpp'
 $text=[IO.File]::ReadAllText($path)
 $text=[regex]::Replace($text,'(?s)static LONG CALLBACK traceShutdownFault\(.*?(?=extern void finishGraphicsLibraryShutdown)', '')
 $text=$text.Replace('AddVectoredExceptionHandler(1,traceShutdownFault);','')
 [IO.File]::WriteAllText($path,$text)
-$path=Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\Common\Thing\ThingFactory.cpp'
+$path=Join-Path $editionSourcePath 'Code\GameEngine\Source\Common\Thing\ThingFactory.cpp'
 $text=[IO.File]::ReadAllText($path)
 $text=[regex]::Replace($text,'(?s)char enabled\[2\]=\{\};\s*if\(GetEnvironmentVariableA\("GENERALS_X64_STARTUP_TRACE".*?(?=deleteInstance\(tmpl\);)', '')
 [IO.File]::WriteAllText($path,$text)

@@ -1,5 +1,6 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$SourcePath)
+param([Parameter(Mandatory)][string]$SourcePath, [ValidateSet('Generals','GeneralsMD')][string]$GameEdition='GeneralsMD')
+$editionSourcePath = Join-Path $SourcePath $GameEdition
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 $expectedPath = Join-Path $repositoryPath '.build\community-reference-x64\GeneralsGameCode-b805c12ee1aedc0a4b241006803b8e04bbf288a6'
@@ -19,7 +20,7 @@ $surface = [IO.File]::ReadAllText($surfacePath)
 $surface = $surface.Replace('(unsigned char*) ((unsigned int)lock_rect.pBits+(y-min->J)*lock_rect.Pitch+(x-min->I)*size)', 'static_cast<unsigned char*>(lock_rect.pBits)+(y-min->J)*lock_rect.Pitch+(x-min->I)*size')
 $surface = $surface.Replace('(unsigned char*) ((unsigned int)lock_rect.pBits+y*lock_rect.Pitch)', 'static_cast<unsigned char*>(lock_rect.pBits)+y*lock_rect.Pitch')
 [IO.File]::WriteAllText($surfacePath, $surface)
-$ddsSourcePath = Join-Path $SourcePath 'GeneralsMD\Code\Libraries\Source\WWVegas\WW3D2\ddsfile.cpp'
+$ddsSourcePath = Join-Path $editionSourcePath 'Code\Libraries\Source\WWVegas\WW3D2\ddsfile.cpp'
 $ddsSource = [IO.File]::ReadAllText($ddsSourcePath)
 if (-not $ddsSource.Contains('// generals-mods DDS load probe')) {
     $helper = @'
@@ -44,7 +45,7 @@ static void traceDDSLoad(const char* name, unsigned width, unsigned height, unsi
     $ddsSource = $ddsSource.Replace('unsigned read_size=file->Read(DDSMemory,size);', 'unsigned read_size=file->Read(DDSMemory,size);' + "`n" + 'traceDDSLoad(Name,Width,Height,read_size,size);')
     [IO.File]::WriteAllText($ddsSourcePath, $ddsSource)
 }
-$mainCmake = Join-Path $SourcePath 'GeneralsMD\Code\Main\CMakeLists.txt'
+$mainCmake = Join-Path $editionSourcePath 'Code\Main\CMakeLists.txt'
 $mainText = [IO.File]::ReadAllText($mainCmake)
 $mainText = [regex]::Replace($mainText, '(?m)^    d3d(?:x)?8\r?\n', '')
 [IO.File]::WriteAllText($mainCmake, $mainText)
@@ -55,21 +56,23 @@ $header = $header.Replace('int Stack_Walk(unsigned long *return_addresses', 'int
 $header = $header.Replace('extern unsigned long ExceptionReturn', 'extern uintptr_t ExceptionReturn')
 if (-not $header.Contains('#include <cstdint>')) { $header = '#include <cstdint>' + "`n" + $header }
 [IO.File]::WriteAllText($headerPath, $header)
-$stackHeaderPath = Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Include\Common\StackDump.h'
+$stackHeaderPath = Join-Path $editionSourcePath 'Code\GameEngine\Include\Common\StackDump.h'
 $stackHeader = [IO.File]::ReadAllText($stackHeaderPath)
 $stackHeader = $stackHeader.Replace('DWORD eip,DWORD esp,DWORD ebp', 'uintptr_t eip,uintptr_t esp,uintptr_t ebp')
 $stackHeader = $stackHeader.Replace('unsigned int* address', 'uintptr_t* address')
 [IO.File]::WriteAllText($stackHeaderPath, $stackHeader)
-Copy-Item -LiteralPath (Join-Path $repositoryPath 'renderer\StackDumpX64.cpp') -Destination (Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\Common\System\StackDump.cpp') -Force
+Copy-Item -LiteralPath (Join-Path $repositoryPath 'renderer\StackDumpX64.cpp') -Destination (Join-Path $editionSourcePath 'Code\GameEngine\Source\Common\System\StackDump.cpp') -Force
 $windowPath = Join-Path $SourcePath 'Core\GameEngine\Include\GameClient\GameWindow.h'
 $window = [IO.File]::ReadAllText($windowPath)
 $window = $window.Replace('typedef UnsignedInt WindowMsgData;', 'typedef uintptr_t WindowMsgData;')
 if (-not $window.Contains('#include <cstdint>')) { $window = '#include <cstdint>' + "`n" + $window }
 [IO.File]::WriteAllText($windowPath, $window)
-$engineCmake = Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\CMakeLists.txt'
+$engineCmake = Join-Path $editionSourcePath 'Code\GameEngine\CMakeLists.txt'
 $engineText = [IO.File]::ReadAllText($engineCmake)
-if (-not $engineText.Contains('target_include_directories(z_gameengine PRIVATE ${CMAKE_SOURCE_DIR}/Core/Libraries/Source)')) {
-    [IO.File]::WriteAllText($engineCmake, $engineText + "`n" + 'target_include_directories(z_gameengine PRIVATE ${CMAKE_SOURCE_DIR}/Core/Libraries/Source)' + "`n")
+$engineTarget=if($GameEdition -eq 'Generals'){'g_gameengine'}else{'z_gameengine'}
+$includeDirective='target_include_directories('+$engineTarget+' PRIVATE ${CMAKE_SOURCE_DIR}/Core/Libraries/Source)'
+if (-not $engineText.Contains($includeDirective)) {
+    [IO.File]::WriteAllText($engineCmake, $engineText + "`n" + $includeDirective + "`n")
 }
 $debugPath = Join-Path $SourcePath 'Core\Libraries\Source\debug\debug_except.cpp'
 $debug = [IO.File]::ReadAllText($debugPath)
@@ -118,7 +121,7 @@ if (-not $debug.Contains('#include <intrin.h>')) { $debug = '#include <intrin.h>
 $videoHeader = Join-Path $SourcePath 'Core\GameEngine\Include\GameClient\WindowVideoManager.h'
 $videoText = [IO.File]::ReadAllText($videoHeader).Replace('std::hash<UnsignedInt> hasher;', 'std::hash<ConstGameWindowPtr> hasher;').Replace('return hasher((UnsignedInt)p);', 'return hasher(p);')
 [IO.File]::WriteAllText($videoHeader, $videoText)
-$assetPath = Join-Path $SourcePath 'GeneralsMD\Code\GameEngineDevice\Source\W3DDevice\GameClient\W3DAssetManager.cpp'
+$assetPath = Join-Path $editionSourcePath 'Code\GameEngineDevice\Source\W3DDevice\GameClient\W3DAssetManager.cpp'
 $assetText = [IO.File]::ReadAllText($assetPath).Replace('((int)mesh_name) - ((int)name) + 1', 'static_cast<int>(mesh_name - name) + 1')
 [IO.File]::WriteAllText($assetPath, $assetText)
 foreach ($file in @('registry.h', 'registry.cpp', 'thread.h')) {
@@ -136,7 +139,7 @@ $ime = [IO.File]::ReadAllText($imePath).Replace('(Char*) ((UnsignedInt) clist + 
 $firewallPath = Join-Path $SourcePath 'Core\GameEngine\Source\GameNetwork\FirewallHelper.cpp'
 $firewall = [IO.File]::ReadAllText($firewallPath).Replace('ntohl((UnsignedInt)mangler_addresses[m]);', '// Address bytes are already stored in network order.')
 [IO.File]::WriteAllText($firewallPath, $firewall)
-$gameEnginePath = Join-Path $SourcePath 'GeneralsMD\Code\GameEngine\Source\Common\GameEngine.cpp'
+$gameEnginePath = Join-Path $editionSourcePath 'Code\GameEngine\Source\Common\GameEngine.cpp'
 $gameEngine = [IO.File]::ReadAllText($gameEnginePath)
 if (-not $gameEngine.Contains('// generals-mods x64 startup diagnostics')) {
     $trace = @'

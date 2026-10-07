@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 $repositoryPath=Split-Path $PSScriptRoot -Parent
 $expectedPath=Join-Path $repositoryPath '.build\d3d8to9-reference-x64\d3d8to9-255338f698c8270b537f0a91a13f795f4f988250'
 if([IO.Path]::GetFullPath($SourcePath).TrimEnd('\') -ne [IO.Path]::GetFullPath($expectedPath).TrimEnd('\')) {throw 'Only the pinned x64 bridge may be patched.'}
-foreach($file in @('D3D9On12Resources.h','DlaaPass.h','NeuralResolve.h','StreamlineRuntime.h','MotionCapture9.h','NeuralRenderer9.h','NeuralBridgeExports.cpp')) {
+foreach($file in @('D3D9On12Resources.h','NativePresentation12.h','DlaaPass.h','NeuralResolve.h','StreamlineRuntime.h','MotionCapture9.h','NeuralRenderer9.h','NeuralBridgeExports.cpp')) {
     Copy-Item -LiteralPath (Join-Path $repositoryPath ('renderer\'+$file)) -Destination (Join-Path $SourcePath ('source\'+$file)) -Force
 }
 $path=Join-Path $SourcePath 'source\d3d8to9_device.cpp'
@@ -62,5 +62,9 @@ $text=[IO.File]::ReadAllText($path)
 if(-not $text.Contains('source/NeuralBridgeExports.cpp')) {
     $include=(Join-Path $repositoryPath '.build\streamline-sdk-v2.14.1\include').Replace('\','/')
     $text+="`n"+'target_sources(d3d8to9 PRIVATE source/NeuralBridgeExports.cpp)'+"`n"+'target_include_directories(d3d8to9 PRIVATE "'+$include+'")'+"`n"+'target_compile_definitions(d3d8to9 PRIVATE NOMINMAX)'+"`n"+'target_link_libraries(d3d8to9 d3d12 d3dcompiler)'+"`n"
+    [IO.File]::WriteAllText($path,$text)
+}
+if(-not $text.Contains('target_link_libraries(d3d8to9 dxgi)')) {
+    $text+="`n"+'target_link_libraries(d3d8to9 dxgi)'+"`n"
     [IO.File]::WriteAllText($path,$text)
 }

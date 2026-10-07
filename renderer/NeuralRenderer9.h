@@ -4,6 +4,7 @@
 #include "NeuralResolve.h"
 #include <memory>
 #include <cmath>
+#include "NativePresentation12.h"
 
 namespace generals_mods {
 inline void neuralLog(const char* message, HRESULT hr=S_OK) {
@@ -39,8 +40,14 @@ public:
     UINT mode() const { return mode_; }
     void beforePresent() {runtime_.beforePresent();}
     void afterPresent() {runtime_.afterPresent();}
+    HRESULT nativePresent() {
+        const ULONG before=referenceCount();
+        HRESULT hr=presentation_.present(device_);
+        references_+=referenceCount()-before;
+        return hr;
+    }
     ULONG ownedReferences() const { return references_; }
-    void resetDevice() { const ULONG before=referenceCount(); releaseTargets(); reset_=true; motion_.resetDevice(); references_+=referenceCount()-before; }
+    void resetDevice() { const ULONG before=referenceCount(); presentation_.reset(); releaseTargets(); reset_=true; motion_.resetDevice(); references_+=referenceCount()-before; }
     void resetHistory() {reset_=true;motion_.reset();}
     HRESULT begin(uint64_t scene) {
         if(!mode_ || !available()) return S_FALSE;
@@ -232,6 +239,7 @@ private:
     sl::float2 jitter_{0,0};
     UINT width_=0,height_=0,mode_=0;
     ULONG references_=0;
+    NativePresentation12 presentation_;
     std::vector<unsigned char> screenVertices_;
     uint32_t frame_=0;
     uint32_t evaluations_=0;
