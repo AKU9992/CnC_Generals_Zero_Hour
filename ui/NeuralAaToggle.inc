@@ -86,6 +86,21 @@ static void createNeuralToggle(const AsciiString& rememberedMode, const AsciiStr
             WIN_STATUS_ENABLED | (prototype->winGetStatus() & WIN_STATUS_IMAGE),
             x + width - buttonWidth, y, buttonWidth, height, &instance, comboBoxAntiAliasing->winGetFont(), FALSE);
         if (!neuralToggleButton) return;
+        WinInstanceData toggleCaption;
+        toggleCaption.m_style = GWS_STATIC_TEXT;
+        toggleCaption.m_id = TheNameKeyGenerator->nameToKey("OptionsMenu.wnd:NeuralToggleLabel");
+        const auto* captionLook = gammaLabel ? gammaLabel->winGetInstanceData() : look;
+        toggleCaption.m_enabledText = captionLook->m_enabledText;
+        toggleCaption.m_disabledText = captionLook->m_disabledText;
+        toggleCaption.m_hiliteText = captionLook->m_hiliteText;
+        TextData toggleText = {}; toggleText.centered = TRUE;
+        GameWindow* toggleLabel = TheWindowManager->gogoGadgetStaticText(overlayParent,
+            WIN_STATUS_ENABLED, x + width - buttonWidth, y - height, buttonWidth, height,
+            &toggleCaption, &toggleText, comboBoxAntiAliasing->winGetFont(), FALSE);
+        if (toggleLabel) {
+            GadgetStaticTextSetText(toggleLabel, UnicodeString(L"DLSS"));
+            toggleLabel->winHide(comboBoxAntiAliasing->winIsHidden());
+        }
         neuralToggleButton->winSetOwner(prototype->winGetOwner());
         neuralToggleButton->winHide(comboBoxAntiAliasing->winIsHidden());
         neuralToggleButton->winSetTooltip(UnicodeString(L"\u0412\u041a\u041b: DLSS/DLAA. \u0412\u042b\u041a\u041b: \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u043e\u0435 \u0441\u0433\u043b\u0430\u0436\u0438\u0432\u0430\u043d\u0438\u0435 MSAA. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c\u00bb."));
