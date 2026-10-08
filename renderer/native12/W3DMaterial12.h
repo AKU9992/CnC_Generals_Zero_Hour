@@ -30,13 +30,14 @@ public:
     HRESULT initialize();
     void beginFrame(); // after Device::beginFrame has waited on this frame's allocator
     void retain(ID3D12Resource* resource); // bound targets live until the frame fence
-    HRESULT draw(const MaterialVertex* vertices,UINT count,MaterialState& state,D3D12_PRIMITIVE_TOPOLOGY topology=D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    HRESULT draw(const MaterialVertex* vertices,UINT count,MaterialState& state,D3D12_PRIMITIVE_TOPOLOGY topology=D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,const uint32_t* indices=nullptr,UINT indexCount=0);
     void shutdown();
 private:
     struct Page {Ptr<ID3D12Resource> resource;uint8_t* mapped=nullptr;UINT offset=0;};
     struct Frame {
         std::vector<Page> pages;UINT page=0,descriptors=0,samplerDescriptors=0;
         std::map<std::array<DWORD,40>,UINT> samplerCache;
+        std::map<std::array<uintptr_t,8>,UINT> textureCache;
         Ptr<ID3D12DescriptorHeap> textures,samplers;
         std::vector<Ptr<ID3D12Resource>> retained;
     };

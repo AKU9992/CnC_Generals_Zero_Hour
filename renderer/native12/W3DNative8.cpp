@@ -1,3 +1,4 @@
+#include "NativeFrameControl.h"
 // W3D's existing source ABI implemented with native D3D12 objects.
 // No Direct3D8/9 runtime is loaded or queried by this module.
 #define Direct3DCreate8 W3DLegacyDeclarationDirect3DCreate8
@@ -151,10 +152,13 @@ struct Device8 final:Device8Methods {
     Microsoft::WRL::ComPtr<IDirect3DIndexBuffer8> indices;UINT baseVertex=0;DWORD vertexFormat=D3DFVF_XYZ,pixelShader=0;
     Microsoft::WRL::ComPtr<IDirect3DBaseTexture8> textures[4];
     Microsoft::WRL::ComPtr<IDirect3DSurface8> back,defaultDepth,target,zTarget;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> defaultDepthHeap;
+    ID3D12Resource* defaultDepthResource=nullptr;
     bool world=false,sceneReady=false,resetHistory=true,inScene=false;float clearColor[4]={0,0,0,1};UINT frameIndex=0,draws=0;
     uint64_t objectId=0,sceneId=0;
     D3DMATRIX previousCamera{};D3DVIEWPORT8 previousViewport{};float previousCameraPosition[3]{};UINT worldFrames=0;DWORD loggedWater=0;bool loggedShadow=false;
-    struct History{D3DMATRIX transform;std::vector<MaterialVertex> vertices;UINT frame=0;};std::map<std::array<uint64_t,3>,History> history;
+    std::vector<MaterialVertex> scratchVertices;std::vector<uint32_t> scratchIndices;
+    struct History{D3DMATRIX transform;std::vector<std::array<float,4>> positions;UINT frame=0;};std::map<std::array<uint64_t,3>,History> history;
     struct Snapshot{MaterialState state;D3DMATRIX transforms[512];DWORD vertexFormat;};std::map<DWORD,Snapshot> blocks;DWORD nextBlock=1;
     explicit Device8(IDirect3D8* p):parent(p){context->owner=this;defaults();}
     ~Device8(){if(context->device.commands())context->device.endFrame();context->owner=nullptr;context->device.waitIdle();}
@@ -212,11 +216,16 @@ struct Device8 final:Device8Methods {
         }else{HRESULT hr=context->device.bindTarget();if(FAILED(hr))return hr;
             state.colorFormat=DXGI_FORMAT_R8G8B8A8_UNORM;state.depthFormat=DXGI_FORMAT_UNKNOWN;state.worldPass=false;
             if(defaultDepth){auto& d=*static_cast<Surface8*>(defaultDepth.Get())->meta->data;hr=uploadTexture(context->device,d);if(FAILED(hr))return hr;
-                Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> rtv,dsv;D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.NumDescriptors=1;hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-                hr=context->device.device()->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&rtv));if(FAILED(hr))return hr;hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-                hr=context->device.device()->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&dsv));if(FAILED(hr))return hr;
-                auto color=rtv->GetCPUDescriptorHandleForHeapStart(),depth=dsv->GetCPUDescriptorHandleForHeapStart();
-                context->device.device()->CreateRenderTargetView(context->device.target(),nullptr,color);context->device.device()->CreateDepthStencilView(d.resource.Get(),nullptr,depth);
+                // GUI clipping changes the viewport for each label. Reuse the
+                // swapchain RTV and default DSV instead of allocating heaps per label.
+                if(!defaultDepthHeap || defaultDepthResource!=d.resource.Get()){
+                    D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.NumDescriptors=1;hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+                    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> replacement;
+                    hr=context->device.device()->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&replacement));if(FAILED(hr))return hr;
+                    context->device.device()->CreateDepthStencilView(d.resource.Get(),nullptr,replacement->GetCPUDescriptorHandleForHeapStart());
+                    defaultDepthHeap=std::move(replacement);defaultDepthResource=d.resource.Get();
+                }
+                auto color=context->device.currentTargetHandle(),depth=defaultDepthHeap->GetCPUDescriptorHandleForHeapStart();
                 commands->OMSetRenderTargets(1,&color,FALSE,&depth);state.depthFormat=d.format;
             }
         }
@@ -282,14 +291,15 @@ struct Device8 final:Device8Methods {
         context->scene.shutdown();sceneReady=false;HRESULT hr=context->device.resize(p->BackBufferWidth,p->BackBufferHeight);if(FAILED(hr))return hr;
         hr=context->dlss.configure(mode,context->device.width(),context->device.height());if(FAILED(hr))return hr;
         parameters=*p;back.Attach(new Surface8(meta(p->BackBufferWidth,p->BackBufferHeight,1,D3DFMT_A8R8G8B8,0,D3DPOOL_DEFAULT),0,true));
+        defaultDepthHeap.Reset();defaultDepthResource=nullptr;
         defaultDepth.Reset();hr=CreateDepthStencilSurface(p->BackBufferWidth,p->BackBufferHeight,D3DFMT_D24S8,D3DMULTISAMPLE_NONE,&defaultDepth);if(FAILED(hr))return hr;
         target.Reset();zTarget.Reset();
         state.viewport={0,0,p->BackBufferWidth,p->BackBufferHeight,0,1};resetHistory=true;history.clear();return S_OK;}
     HRESULT STDMETHODCALLTYPE Present(const RECT*,const RECT*,HWND,const RGNDATA*)override{
         HRESULT hr=frame();if(FAILED(hr))return hr;hr=endWorld();if(FAILED(hr))return hr;
-        context->dlss.beforePresent();std::vector<uint8_t> pixels;char path[MAX_PATH]{};
+        const UINT sync=frameControl().vsync()?1u:0u;context->dlss.beforePresent(sync,context->device.presentFlags(sync));std::vector<uint8_t> pixels;char path[MAX_PATH]{};
         const bool capture=GetEnvironmentVariableA("GENERALS_CAPTURE_FRAME",path,MAX_PATH)>0 && (frameIndex%120==0 || GetEnvironmentVariableA("GENERALS_CAPTURE_EVERY_FRAME",nullptr,0)>0);
-        hr=context->device.endFrame(0,capture ? &pixels : nullptr);context->dlss.afterPresent();inScene=false;
+        hr=context->device.endFrame(sync,capture ? &pixels : nullptr);context->dlss.afterPresent();inScene=false;
         if(SUCCEEDED(hr) && capture){std::string name=std::string(path)+".native.bmp";FILE* file=nullptr;if(fopen_s(&file,name.c_str(),"wb")==0){
             BITMAPFILEHEADER header{};BITMAPINFOHEADER info{};header.bfType=0x4d42;header.bfOffBits=sizeof(header)+sizeof(info);
             header.bfSize=header.bfOffBits+static_cast<DWORD>(pixels.size());info.biSize=sizeof(info);info.biWidth=LONG(context->device.width());info.biHeight=-LONG(context->device.height());
@@ -442,10 +452,9 @@ HRESULT Device8::draw(D3DPRIMITIVETYPE type,UINT primitives,const uint8_t* data,
     if(!data || !stride || !primitives || primitives>1000000)return D3DERR_INVALIDCALL;HRESULT hr=frame();if(FAILED(hr))return hr;
     const bool triangles=type==D3DPT_TRIANGLELIST || type==D3DPT_TRIANGLESTRIP || type==D3DPT_TRIANGLEFAN;
     const UINT expanded=triangles ? primitives*3 : type==D3DPT_POINTLIST ? primitives : primitives*2;
-    std::vector<MaterialVertex> vertices;vertices.reserve(expanded);state.pretransformed=(vertexFormat&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW;
-    auto emit=[&](UINT source)->bool{
-        UINT index=source;if(indexData){index=indexFormat==D3DFMT_INDEX32 ? static_cast<const uint32_t*>(indexData)[source] : static_cast<const uint16_t*>(indexData)[source];}
-        index+=start;if(index>=vertexCount)return false;const uint8_t* bytes=data+size_t(index)*stride;UINT offset=0;MaterialVertex v;
+    auto& vertices=scratchVertices;vertices.clear();vertices.reserve(expanded);state.pretransformed=(vertexFormat&D3DFVF_POSITION_MASK)==D3DFVF_XYZRHW;
+    auto convert=[&](UINT index)->bool{
+        if(index>=vertexCount)return false;const uint8_t* bytes=data+size_t(index)*stride;UINT offset=0;MaterialVertex v;
         auto copy=[&](void* out,UINT size)->bool{if(size>stride-offset)return false;std::memcpy(out,bytes+offset,size);offset+=size;return true;};
         if(!copy(v.position,state.pretransformed ? 16 : 12))return false;
         if(state.pretransformed){const float w=v.position[3] ? 1/v.position[3] : 1;
@@ -462,7 +471,21 @@ HRESULT Device8::draw(D3DPRIMITIVETYPE type,UINT primitives,const uint8_t* data,
             float uv[4]={0,0,0,1};if(!copy(uv,n*4))return false;if(i<4)std::memcpy(v.uv[i],uv,16);}
         std::memcpy(v.previous,v.position,16);vertices.push_back(v);return true;
     };
-    for(UINT p=0;p<primitives;++p){if(type==D3DPT_TRIANGLELIST){if(!emit(p*3)||!emit(p*3+1)||!emit(p*3+2))return D3DERR_INVALIDCALL;}
+    auto readIndex=[&](UINT source)->UINT{return indexFormat==D3DFMT_INDEX32 ? static_cast<const uint32_t*>(indexData)[source] : static_cast<const uint16_t*>(indexData)[source];};
+    auto emit=[&](UINT source)->bool{const UINT index=indexData?readIndex(source):source;if(start>=vertexCount || index>=vertexCount-start)return false;return convert(start+index);};
+    auto& nativeIndices=scratchIndices;nativeIndices.clear();
+    bool indexed=indexData && (type==D3DPT_TRIANGLELIST || type==D3DPT_LINELIST || type==D3DPT_POINTLIST);
+    if(indexed){
+        UINT low=UINT_MAX,high=0;
+        for(UINT i=0;i<expanded;++i){const UINT index=readIndex(i);if(start>=vertexCount || index>=vertexCount-start)return D3DERR_INVALIDCALL;low=std::min(low,index);high=std::max(high,index);}
+        indexed=high-low+1<=expanded;
+        if(indexed){
+            vertices.reserve(high-low+1);
+            for(UINT i=low;i<=high;++i)if(!convert(start+i))return D3DERR_INVALIDCALL;
+            nativeIndices.resize(expanded);for(UINT i=0;i<expanded;++i)nativeIndices[i]=readIndex(i)-low;
+        }
+    }
+    if(!indexed)for(UINT p=0;p<primitives;++p){if(type==D3DPT_TRIANGLELIST){if(!emit(p*3)||!emit(p*3+1)||!emit(p*3+2))return D3DERR_INVALIDCALL;}
         else if(type==D3DPT_TRIANGLESTRIP){if(!emit(p+(p&1))||!emit(p+1-(p&1))||!emit(p+2))return D3DERR_INVALIDCALL;}
         else if(type==D3DPT_TRIANGLEFAN){if(!emit(0)||!emit(p+1)||!emit(p+2))return D3DERR_INVALIDCALL;}
         else if(type==D3DPT_LINELIST){if(!emit(p*2)||!emit(p*2+1))return D3DERR_INVALIDCALL;}
@@ -471,12 +494,14 @@ HRESULT Device8::draw(D3DPRIMITIVETYPE type,UINT primitives,const uint8_t* data,
     using namespace DirectX;D3DMATRIX current;XMStoreFloat4x4(reinterpret_cast<XMFLOAT4X4*>(&current),XMLoadFloat4x4(reinterpret_cast<const XMFLOAT4X4*>(&state.world))*
         XMLoadFloat4x4(reinterpret_cast<const XMFLOAT4X4*>(&state.view))*XMLoadFloat4x4(reinterpret_cast<const XMFLOAT4X4*>(&state.projection)));
     state.previousTransform=current;
-    if(world && !state.pretransformed){std::array<uint64_t,3> key{objectId ? objectId : reinterpret_cast<uintptr_t>(streams[0].Get()),reinterpret_cast<uintptr_t>(indexData),UINT64(start)<<32|primitives};
-        auto found=history.find(key);if(found!=history.end() && found->second.frame+1==frameIndex && found->second.vertices.size()==vertices.size()){
-            state.previousTransform=found->second.transform;for(size_t i=0;i<vertices.size();++i)std::memcpy(vertices[i].previous,found->second.vertices[i].position,16);}
-        history[key]={current,vertices,frameIndex};}
+    if(world && context->dlss.mode()!=NeuralMode::Off && !state.pretransformed){std::array<uint64_t,3> key{objectId ? objectId : reinterpret_cast<uintptr_t>(streams[0].Get()),reinterpret_cast<uintptr_t>(indexData),UINT64(start)<<32|primitives};
+        auto found=history.find(key);if(found!=history.end() && found->second.frame+1==frameIndex && found->second.positions.size()==vertices.size()){
+            state.previousTransform=found->second.transform;for(size_t i=0;i<vertices.size();++i)std::memcpy(vertices[i].previous,found->second.positions[i].data(),16);}
+        auto& prior=history[key];prior.transform=current;prior.frame=frameIndex;prior.positions.resize(vertices.size());
+        for(size_t i=0;i<vertices.size();++i)std::memcpy(prior.positions[i].data(),vertices[i].position,16);}
     hr=context->materials.draw(vertices.data(),static_cast<UINT>(vertices.size()),state,triangles ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST :
-        type==D3DPT_POINTLIST ? D3D_PRIMITIVE_TOPOLOGY_POINTLIST : D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+        type==D3DPT_POINTLIST ? D3D_PRIMITIVE_TOPOLOGY_POINTLIST : D3D_PRIMITIVE_TOPOLOGY_LINELIST,
+        nativeIndices.empty()?nullptr:nativeIndices.data(),static_cast<UINT>(nativeIndices.size()));
     if(SUCCEEDED(hr) && state.waterShader && !(loggedWater&(1u<<state.waterShader))){loggedWater|=1u<<state.waterShader;
         char text[80];sprintf_s(text,"Native water HLSL draw completed: program %u",state.waterShader);log(text);}
     if(SUCCEEDED(hr) && state.render[D3DRS_STENCILENABLE] && !loggedShadow){loggedShadow=true;log("Native stencil shadow draw completed");}

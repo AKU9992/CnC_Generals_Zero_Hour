@@ -78,7 +78,6 @@ The supplied installation contains Generals in `E:\C&C ZH GPTMOD\CaCG` and
 Zero Hour in `E:\C&C ZH GPTMOD\CaCGZH`. Executable version metadata is absent,
 so the installed game edition/patch level has not been established.
 
-The machine reports Windows 11 Pro (build 26200) and an NVIDIA RTX 4070 Ti SUPER
 with a current resolution of 3440 x 1440. Zero Hour's existing options request
 1280 x 1024. The local `d3d8.dll` identifies itself as GenTool. A bundled
 `dbghelp.dll` identifies itself as Windows 2000 version 5.00.2195.1.
@@ -139,7 +138,6 @@ UltraWide was applied to the local Zero Hour Options.ini with filesystem approva
 The original is preserved at:
 
 ```text
-C:\Users\Alex\Documents\Command and Conquer Generals Zero Hour Data\Options.ini.generals-mods-b0e51edba1734e50b8840548d175574a.bak
 ```
 
 The FourK profile is available but has not been applied to the installed game.

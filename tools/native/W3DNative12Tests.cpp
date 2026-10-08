@@ -5,13 +5,17 @@
 #include <stdexcept>
 #include <wrl/client.h>
 static void check(HRESULT hr,const char* operation){if(FAILED(hr)){char text[200];sprintf_s(text,"%s: 0x%08lX",operation,static_cast<unsigned long>(hr));throw std::runtime_error(text);}}
-static void pixel(IDirect3DDevice8* device,UINT x,UINT y,UINT red,UINT green,UINT blue,const char* operation){
-    check(device->EndScene(),"EndScene");check(device->Present(nullptr,nullptr,nullptr,nullptr),"Present");
+static void capturePixel(IDirect3DDevice8* device,UINT x,UINT y,UINT red,UINT green,UINT blue,const char* operation){
+
     FILE* file=nullptr;if(fopen_s(&file,"W3DNative12Tests.native.bmp","rb")!=0)throw std::runtime_error("GPU capture missing");
     BITMAPFILEHEADER header{};BITMAPINFOHEADER info{};fread(&header,1,sizeof(header),file);fread(&info,1,sizeof(info),file);
     uint8_t value[4]{};fseek(file,header.bfOffBits+(y*640+x)*4,SEEK_SET);fread(value,1,4,file);fclose(file);
     if(abs(int(value[0])-int(blue))>3 || abs(int(value[1])-int(green))>3 || abs(int(value[2])-int(red))>3){
         char text[256];sprintf_s(text,"%s: actual RGB %u,%u,%u; expected %u,%u,%u",operation,value[2],value[1],value[0],red,green,blue);throw std::runtime_error(text);}
+}
+static void pixel(IDirect3DDevice8* device,UINT x,UINT y,UINT red,UINT green,UINT blue,const char* operation){
+    check(device->EndScene(),"EndScene");check(device->Present(nullptr,nullptr,nullptr,nullptr),"Present");
+    capturePixel(device,x,y,red,green,blue,operation);
 }
 static Microsoft::WRL::ComPtr<IDirect3DTexture8> solid(IDirect3DDevice8* device,DWORD color){
     Microsoft::WRL::ComPtr<IDirect3DTexture8> texture;check(device->CreateTexture(4,4,1,0,D3DFMT_A8R8G8B8,D3DPOOL_MANAGED,&texture),"solid texture");
@@ -47,7 +51,169 @@ int main(){
         fseek(file,header.bfOffBits,SEEK_SET);fread(pixels.data(),1,pixels.size(),file);fclose(file);
         auto* center=pixels.data()+(240*640+320)*4;if(center[0]>2 || center[1]<250 || center[2]>2)throw std::runtime_error("native textured W3D pixel incorrect");
         std::puts("PASS W3D ABI: native texture Lock/Upload/SRV, FVF, textured draw, DXGI Present, GPU readback");
+        // Repeated GUI clipping and swapchain resets must preserve RTV/DSV binding.
         SetEnvironmentVariableA("GENERALS_CAPTURE_FRAME","W3DNative12Tests");
+        for(UINT pass=0;pass<4;++pass){
+            if(pass==1 || pass==2){p.BackBufferWidth=pass==1?800:640;p.BackBufferHeight=pass==1?600:480;check(device->Reset(&p),"GUI resize reset");}
+            check(device->BeginScene(),"GUI clipping scene");
+            for(UINT label=0;label<1000;++label){
+                D3DVIEWPORT8 clipped{label%20,label%10,320,240,0,1};
+                check(device->SetViewport(&clipped),"repeated GUI clipping");
+            }
+            D3DVIEWPORT8 full{0,0,p.BackBufferWidth,p.BackBufferHeight,0,1};
+            check(device->SetViewport(&full),"restore GUI viewport");
+            check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"GUI clipping clear");
+            check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,triangle,sizeof(V)),"GUI clipping draw");
+            if(pass==1){check(device->EndScene(),"resized GUI end");check(device->Present(nullptr,nullptr,nullptr,nullptr),"resized GUI present");}
+            else pixel(device.Get(),320,240,0,255,0,"GUI clipping/reset preserves texture and depth");
+        }
+        std::puts("PASS repeated GUI clipping, all swapchain buffers and resize/reset descriptor reuse");
+        for(D3DFORMAT format : {D3DFMT_INDEX16,D3DFMT_INDEX32}) {
+            V quad[7]{};quad[3]={100,100,.5f,1,0xffffffff,0,0};quad[4]={540,100,.5f,1,0xffffffff,1,0};quad[5]={540,380,.5f,1,0xffffffff,1,1};quad[6]={100,380,.5f,1,0xffffffff,0,1};
+            const uint16_t i16[]={2,3,4,2,4,5};const uint32_t i32[]={2,3,4,2,4,5};
+            Microsoft::WRL::ComPtr<IDirect3DVertexBuffer8> vb;Microsoft::WRL::ComPtr<IDirect3DIndexBuffer8> ib;BYTE* mapped=nullptr;
+            check(device->CreateVertexBuffer(sizeof(quad),0,D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX1,D3DPOOL_MANAGED,&vb),"indexed vertex buffer");check(vb->Lock(0,0,&mapped,0),"indexed VB lock");memcpy(mapped,quad,sizeof(quad));check(vb->Unlock(),"indexed VB unlock");
+            const UINT size=format==D3DFMT_INDEX16?sizeof(i16):sizeof(i32);
+            check(device->CreateIndexBuffer(size,0,format,D3DPOOL_MANAGED,&ib),"indexed index buffer");check(ib->Lock(0,0,&mapped,0),"indexed IB lock");memcpy(mapped,format==D3DFMT_INDEX16?static_cast<const void*>(i16):static_cast<const void*>(i32),size);check(ib->Unlock(),"indexed IB unlock");
+            check(device->SetStreamSource(0,vb.Get(),sizeof(V)),"indexed stream");check(device->SetIndices(ib.Get(),1),"indexed base vertex");
+            check(device->BeginScene(),"indexed geometry scene");check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"indexed clear");
+            check(device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,2,4,0,2),"indexed nonzero minimum/base draw");pixel(device.Get(),320,240,0,255,0,"indexed shared vertices");capturePixel(device.Get(),50,50,0,0,0,"indexed untouched background");
+        }
+        std::puts("PASS indexed native geometry: 16/32-bit indices, shared vertices, nonzero minimum/base and GPU pixels");
+        SetEnvironmentVariableA("GENERALS_CAPTURE_FRAME","W3DNative12Tests");
+        // A texture changed twice in one unsubmitted frame must preserve the
+        // first draw and use its replacement for the second draw.
+        auto changing=solid(device.Get(),0xffff0000);
+        const V left[]={{80,340,.5f,1,0xffffffff,0,1},{200,100,.5f,1,0xffffffff,.5f,0},{300,340,.5f,1,0xffffffff,1,1}};
+        const V right[]={{340,340,.5f,1,0xffffffff,0,1},{440,100,.5f,1,0xffffffff,.5f,0},{560,340,.5f,1,0xffffffff,1,1}};
+        check(device->SetTexture(0,changing.Get()),"mutable texture bind");
+        check(device->BeginScene(),"mutable texture scene");
+        check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"mutable clear");
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,left,sizeof(V)),"old texture draw");
+        check(changing->LockRect(0,&lock,nullptr,0),"mutable lock");
+        for(UINT y=0;y<4;++y)for(UINT x=0;x<4;++x)reinterpret_cast<DWORD*>(static_cast<uint8_t*>(lock.pBits)+y*lock.Pitch)[x]=0xff00ff00;
+        check(changing->UnlockRect(0),"mutable unlock");
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,right,sizeof(V)),"replacement texture draw");
+        pixel(device.Get(),200,240,255,0,0,"old upload survives later texture update");
+
+        capturePixel(device.Get(),440,240,0,255,0,"new upload and descriptor cache use replacement resource");
+        check(device->SetTexture(0,texture.Get()),"restore initial texture");
+        std::puts("PASS batched immutable texture uploads and cached descriptors across mid-frame updates");
+        // W3D disabled promotion/unit buttons use MULTIPLYADD followed by DOTPRODUCT3.
+        DWORD uiState=0;check(device->CreateStateBlock(D3DSBT_ALL,&uiState),"save UI baseline");
+        // Render2D uses XYZ geometry with the legacy -0.5 pixel bias.
+        // A one-pixel glyph stroke must land in the same pixel as XYZRHW.
+        struct GuiVertex{float x,y,z;DWORD color;float u,v;};
+        auto guiVertex=[](float x,float y){return GuiVertex{(x-.5f)/320.f-1.f,1.f-(y-.5f)/240.f,.5f,0xff00ff00,0,0};};
+        const GuiVertex stroke[]={guiVertex(320,220),guiVertex(321,220),guiVertex(321,260),
+                                  guiVertex(320,220),guiVertex(321,260),guiVertex(320,260)};
+        D3DMATRIX guiIdentity{};guiIdentity._11=guiIdentity._22=guiIdentity._33=guiIdentity._44=1;
+        check(device->SetTransform(D3DTS_WORLD,&guiIdentity),"GUI identity world");
+        check(device->SetTransform(D3DTS_VIEW,&guiIdentity),"GUI identity view");
+        check(device->SetTransform(D3DTS_PROJECTION,&guiIdentity),"GUI identity projection");
+        check(device->SetVertexShader(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1),"W3D XYZ GUI format");
+        check(device->SetRenderState(D3DRS_ZENABLE,FALSE),"GUI no depth");
+        check(device->SetRenderState(D3DRS_LIGHTING,FALSE),"GUI no lighting");
+        check(device->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_DIFFUSE),"GUI vertex color");
+        check(device->BeginScene(),"XYZ glyph stroke scene");
+        check(device->Clear(0,nullptr,D3DCLEAR_TARGET,0xff000000,1,0),"XYZ glyph stroke clear");
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,2,stroke,sizeof(GuiVertex)),"XYZ glyph stroke draw");
+        pixel(device.Get(),320,240,0,255,0,"W3D XYZ one-pixel glyph stroke");
+
+        capturePixel(device.Get(),319,240,0,0,0,"W3D XYZ stroke left neighbor");
+        check(device->ApplyStateBlock(uiState),"restore XYZ GUI baseline");
+        std::puts("PASS W3D XYZ GUI pixel centers: one-pixel glyph stroke and untouched neighbor");
+        auto iconRed=solid(device.Get(),0xffff0000);
+        check(device->BeginScene(),"disabled icon scene");check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"icon clear");
+        check(device->SetTexture(0,iconRed.Get()),"disabled unit/promotion icon");
+        check(device->SetRenderState(D3DRS_TEXTUREFACTOR,0x80A5CA8E),"W3D luminance factors");
+        check(device->SetTextureStageState(0,D3DTSS_COLORARG0,D3DTA_TFACTOR|D3DTA_ALPHAREPLICATE),"grayscale arg0");
+        check(device->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_TEXTURE),"grayscale arg1");
+        check(device->SetTextureStageState(0,D3DTSS_COLORARG2,D3DTA_TFACTOR|D3DTA_ALPHAREPLICATE),"grayscale arg2");
+        check(device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_MULTIPLYADD),"grayscale multiply-add");
+        check(device->SetTextureStageState(1,D3DTSS_COLORARG1,D3DTA_CURRENT),"grayscale current");
+        check(device->SetTextureStageState(1,D3DTSS_COLORARG2,D3DTA_TFACTOR),"grayscale weights");
+        check(device->SetTextureStageState(1,D3DTSS_COLOROP,D3DTOP_DOTPRODUCT3),"grayscale dot3");
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,triangle,sizeof(V)),"disabled icon draw");
+        pixel(device.Get(),320,240,76,76,76,"disabled promotion/unit luminance");
+        check(device->ApplyStateBlock(uiState),"restore icon baseline");
+        // Disabled alpha stages preserve the incoming alpha even when their arguments differ.
+        auto translucent=solid(device.Get(),0x40ff0000);
+        check(device->BeginScene(),"GUI alpha scene");check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"GUI alpha clear");
+        check(device->SetTexture(0,translucent.Get()),"GUI alpha texture");
+        check(device->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE),"GUI blending");
+        check(device->SetRenderState(D3DRS_SRCBLEND,D3DBLEND_SRCALPHA),"GUI source alpha");
+        check(device->SetRenderState(D3DRS_DESTBLEND,D3DBLEND_INVSRCALPHA),"GUI destination alpha");
+        check(device->SetTextureStageState(1,D3DTSS_COLOROP,D3DTOP_SELECTARG1),"GUI stage1 color");
+        check(device->SetTextureStageState(1,D3DTSS_COLORARG1,D3DTA_CURRENT),"GUI stage1 current");
+        check(device->SetTextureStageState(1,D3DTSS_ALPHAOP,D3DTOP_DISABLE),"GUI alpha disabled");
+        check(device->SetTextureStageState(1,D3DTSS_ALPHAARG1,D3DTA_TFACTOR),"irrelevant alpha1");
+        check(device->SetTextureStageState(1,D3DTSS_ALPHAARG2,D3DTA_TFACTOR),"irrelevant alpha2");
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,triangle,sizeof(V)),"GUI alpha draw");
+        pixel(device.Get(),320,240,64,0,0,"disabled alpha stage preserves transparency");
+        // The world may leave a striped alpha texture on stage 1. W3D disables
+        // only its alpha operation for GUI; that texture must not punch holes.
+        auto leftover=solid(device.Get(),0xffffffff);D3DLOCKED_RECT stripeLock{};
+        check(leftover->LockRect(0,&stripeLock,nullptr,0),"leftover atlas lock");
+        for(UINT y=0;y<4;++y)for(UINT x=0;x<4;++x)
+            reinterpret_cast<DWORD*>(static_cast<uint8_t*>(stripeLock.pBits)+y*stripeLock.Pitch)[x]=(x&1)?0xffffffff:0x00ffffff;
+        check(leftover->UnlockRect(0),"leftover atlas unlock");
+        check(device->BeginScene(),"GUI striped alpha scene");check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"striped alpha clear");
+        check(device->SetTexture(1,leftover.Get()),"world stage1 texture remains bound");
+        check(device->SetTextureStageState(1,D3DTSS_TEXCOORDINDEX,0),"stage1 shares GUI UV");
+        check(device->SetTextureStageState(1,D3DTSS_ALPHAARG1,D3DTA_TEXTURE),"disabled stale texture alpha");
+        check(device->SetTextureStageState(1,D3DTSS_ALPHAARG2,D3DTA_CURRENT),"disabled current alpha");
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,triangle,sizeof(V)),"GUI stripes draw");
+        pixel(device.Get(),320,240,64,0,0,"stale texture cannot stripe GUI text/buttons");
+        check(device->BeginScene(),"GUI primary disabled alpha scene");check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"primary alpha clear");
+        check(device->SetTexture(0,leftover.Get()),"GUI primary stale atlas");
+        check(device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1),"GUI vertex color");
+        check(device->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_DIFFUSE),"GUI diffuse");
+        check(device->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_DISABLE),"GUI primary alpha disabled");
+        check(device->SetTextureStageState(0,D3DTSS_ALPHAARG1,D3DTA_TEXTURE),"GUI primary stale alpha");
+        check(device->SetTextureStageState(0,D3DTSS_ALPHAARG2,D3DTA_DIFFUSE),"GUI primary diffuse alpha");
+        V stripedGui[3];memcpy(stripedGui,triangle,sizeof(stripedGui));for(auto& v:stripedGui)v.color=0x4000ff00;
+        check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,stripedGui,sizeof(V)),"GUI primary alpha draw");
+        pixel(device.Get(),320,240,0,64,0,"GUI primary disabled alpha ignores striped texture");
+        puts("PASS GUI disabled alpha stages: primary and secondary alpha preservation");
+        check(device->ApplyStateBlock(uiState),"restore GUI baseline");
+        puts("PASS disabled promotion/unit icons: exact W3D grayscale stages and GUI alpha preservation");
+        // Optional stock atlas probe: tank, infantry and artillery promotion pixels,
+        // checked in both their normal and W3D disabled grayscale render modes.
+        char atlasPath[MAX_PATH]{};
+        if(GetEnvironmentVariableA("GENERALS_GUI_TEST_TEXTURE",atlasPath,MAX_PATH)){
+            Microsoft::WRL::ComPtr<IDirect3DTexture8> atlas;
+            check(D3DXCreateTextureFromFileExA(device.Get(),atlasPath,D3DX_DEFAULT,D3DX_DEFAULT,1,0,D3DFMT_A8R8G8B8,D3DPOOL_MANAGED,D3DX_FILTER_NONE,D3DX_FILTER_NONE,0,nullptr,nullptr,&atlas),"stock atlas load");
+            D3DLOCKED_RECT atlasLock{};check(atlas->LockRect(0,&atlasLock,nullptr,D3DLOCK_READONLY),"stock atlas pixels");
+            const UINT coordinates[][2]={{155,412},{465,321},{341,421}};
+            DWORD expected[3]{};
+            for(UINT i=0;i<3;++i)memcpy(&expected[i],static_cast<const uint8_t*>(atlasLock.pBits)+coordinates[i][1]*atlasLock.Pitch+coordinates[i][0]*4,4);
+            check(atlas->UnlockRect(0),"stock atlas unlock");
+            for(UINT i=0;i<3;++i)for(UINT gray=0;gray<2;++gray){
+                check(device->ApplyStateBlock(uiState),"stock atlas baseline");
+                check(device->BeginScene(),"stock atlas scene");check(device->Clear(0,nullptr,D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER,0xff000000,1,0),"stock atlas clear");
+                check(device->SetTexture(0,atlas.Get()),"stock atlas bind");
+                if(gray){
+                    check(device->SetRenderState(D3DRS_TEXTUREFACTOR,0x80A5CA8E),"stock luminance");
+                    check(device->SetTextureStageState(0,D3DTSS_COLORARG0,D3DTA_TFACTOR|D3DTA_ALPHAREPLICATE),"stock grayscale arg0");
+                    check(device->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_TEXTURE),"stock grayscale arg1");
+                    check(device->SetTextureStageState(0,D3DTSS_COLORARG2,D3DTA_TFACTOR|D3DTA_ALPHAREPLICATE),"stock grayscale arg2");
+                    check(device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_MULTIPLYADD),"stock multiply-add");
+                    check(device->SetTextureStageState(1,D3DTSS_COLORARG1,D3DTA_CURRENT),"stock current");
+                    check(device->SetTextureStageState(1,D3DTSS_COLORARG2,D3DTA_TFACTOR),"stock weights");
+                    check(device->SetTextureStageState(1,D3DTSS_COLOROP,D3DTOP_DOTPRODUCT3),"stock dot3");
+                }
+                V icon[3];memcpy(icon,triangle,sizeof(icon));
+                for(auto& v:icon){v.u=(coordinates[i][0]+.5f)/512;v.v=(coordinates[i][1]+.5f)/512;}
+                check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,1,icon,sizeof(V)),"stock unit/promotion draw");
+                UINT r=(expected[i]>>16)&255,g=(expected[i]>>8)&255,b=expected[i]&255;
+                if(gray){UINT luminance=UINT(.299f*r+.587f*g+.114f*b+.5f);r=g=b=luminance;}
+                pixel(device.Get(),320,240,r,g,b,gray?"stock disabled tank/infantry/promotion":"stock normal tank/infantry/promotion");
+            }
+            check(device->ApplyStateBlock(uiState),"restore stock icon baseline");
+            puts("PASS stock Battlemaster, Red Guard and Artillery Training atlas: normal and disabled GPU pixels");
+        }
+        check(device->DeleteStateBlock(uiState),"delete GUI baseline");
         // Projected shadows and water reflection render into textures, then sample GPU contents.
         Microsoft::WRL::ComPtr<IDirect3DTexture8> reflection;Microsoft::WRL::ComPtr<IDirect3DSurface8> surface,back,depth;
         check(device->CreateTexture(640,480,1,D3DUSAGE_RENDERTARGET,D3DFMT_A8R8G8B8,D3DPOOL_DEFAULT,&reflection),"reflection texture");

@@ -64,6 +64,25 @@ foreach($backend in @('Std','Win32')){
 '@)
         [IO.File]::WriteAllText($filesystemPath,'#include <cstdlib>'+"`r`n"+$filesystemText)
     }
+    $filesystemText=[IO.File]::ReadAllText($filesystemPath)
+    if(-not $filesystemText.Contains('getenv("GENERALS_BASE_GAME")')){
+        $anchor='GetStringFromGeneralsRegistry("", "InstallPath", installPath );'
+        $portable=@"
+    // Portable native clients load base archives from the adjacent Generals folder.
+    const char* nativeRenderer=getenv("GENERALS_RENDERER");
+    if (nativeRenderer && strcmp(nativeRenderer,"native12")==0) {
+        const char* base=getenv("GENERALS_BASE_GAME");
+        if (base && base[0]) installPath=base;
+    }
+"@
+        $filesystemText=$filesystemText.Replace($anchor,$anchor+"`r`n"+$portable)
+        [IO.File]::WriteAllText($filesystemPath,$filesystemText)
+    }
+    # Archive loading precedes graphics device creation; detect the selected backend.
+    $filesystemText=[IO.File]::ReadAllText($filesystemPath)
+    $updated=$filesystemText.Replace('    if (GetModuleHandleW(L"generals-native12.dll")) {',
+        '    const char* nativeRenderer=getenv("GENERALS_RENDERER");'+[Environment]::NewLine+'    if (nativeRenderer && strcmp(nativeRenderer,"native12")==0) {')
+    if($updated -ne $filesystemText){[IO.File]::WriteAllText($filesystemPath,$updated)}
 }
 $shaderPath=Join-Path $SourcePath 'Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DShaderManager.cpp'
 $shaderText=[IO.File]::ReadAllText($shaderPath)
@@ -96,5 +115,23 @@ if(-not $text.Contains('GeneralsNativeCreateWaterShaders')){
     $anchor='// Create reflection texture'
     $text=$text.Replace($anchor,"}`n"+$anchor)
     $text=$text.Replace('if (W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1)','if (!nativeWaterShaders && W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1)')
+    [IO.File]::WriteAllText($path,$text)
+}
+
+# Exercise real layout rendering in unattended probes, with isolated preferences.
+$path=Join-Path $SourcePath ($GameEdition+'/Code/GameEngine/Source/Common/GameEngine.cpp')
+$text=[IO.File]::ReadAllText($path)
+if(-not $text.Contains('GENERALS_TEST_GUI_LAYOUT')){
+    $anchor='        performanceLog.beginFrame();'
+    if(-not $text.Contains($anchor)){throw 'Native GUI probe requires the lifecycle test hook.'}
+    $text=$text.Replace($anchor,@'
+        static WindowLayout* nativeGuiProbe = nullptr;
+        if (quitSeconds > 0 && getenv("GENERALS_TEST_GUI_LAYOUT") && !nativeGuiProbe &&
+            timeGetTime() - quitTestStart > 5000 && TheWindowManager) {
+            nativeGuiProbe = TheWindowManager->winCreateLayout(getenv("GENERALS_TEST_GUI_LAYOUT"));
+            if (nativeGuiProbe) {if(getenv("GENERALS_TEST_GUI_INITIALIZE") && strcmp(getenv("GENERALS_TEST_GUI_INITIALIZE"),"1")==0)nativeGuiProbe->runInit(nullptr);nativeGuiProbe->hide(FALSE);nativeGuiProbe->bringForward();}
+        }
+        performanceLog.beginFrame();
+'@)
     [IO.File]::WriteAllText($path,$text)
 }

@@ -1,0 +1,25 @@
+// AKU9992_VERSION
+1 VERSIONINFO
+ FILEVERSION 1,0,0,4
+ PRODUCTVERSION 1,0,0,4
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0
+ FILEOS 0x40004L
+ FILETYPE 1
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904b0"
+  BEGIN
+   VALUE "CompanyName", "AKU9992\0"
+   VALUE "FileDescription", "AKU9992\0"
+   VALUE "ProductName", "AKU9992\0"
+   VALUE "FileVersion", "1.0.0.4\0"
+   VALUE "ProductVersion", "1.0.0.4\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x409, 1200
+ END
+END

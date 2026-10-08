@@ -11,6 +11,10 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 
 // Seekable archive slice keeps ZIP offsets relative to the embedded payload.
+[assembly: System.Reflection.AssemblyTitle("AKU9992")]
+[assembly: System.Reflection.AssemblyDescription("AKU9992")]
+[assembly: System.Reflection.AssemblyCompany("AKU9992")]
+[assembly: System.Reflection.AssemblyProduct("AKU9992 Native12")]
 sealed class PayloadStream : Stream {
     readonly FileStream file; readonly long origin, length; long position;
     public PayloadStream(FileStream file, long origin, long length) { this.file=file; this.origin=origin; this.length=length; }
@@ -74,6 +78,10 @@ static class InstallEngine {
     }
     public static void Run(string directory,bool verify,bool shortcuts,Action<int,string> progress) {
         string root=verify ? null : Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar);
+#if PATCH
+        if(!verify && (!File.Exists(Path.Combine(root,"CaCG","game.dat")) || !File.Exists(Path.Combine(root,"CaCGZH","game.dat"))))
+            throw new IOException("Выберите существующую папку клиента с CaCG и CaCGZH.");
+#endif
         if(!verify) {
             foreach(var name in new[] {"generals-client","generals","generals-x64-test","generalszh-x64-test"})
                 foreach(var process in Process.GetProcessesByName(name)) {
@@ -102,7 +110,11 @@ static class InstallEngine {
                         using(var input=File.OpenRead(temporary)) actual=Hash(input);
                     }
                     if(!actual.Equals(fields[0],StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Не совпадает контрольная сумма: "+relative);
-                    if(!verify) {
+            #if PATCH
+        if(!verify && (!File.Exists(Path.Combine(root,"CaCG","game.dat")) || !File.Exists(Path.Combine(root,"CaCGZH","game.dat"))))
+            throw new IOException("Выберите существующую папку клиента с CaCG и CaCGZH.");
+#endif
+        if(!verify) {
                         for(int retry=0;;retry++) {
                             try {
                                 if(File.Exists(destination)) File.Delete(destination);
@@ -140,11 +152,23 @@ sealed class InstallerForm : Form {
     readonly TextBox folder=new TextBox(); readonly Button install=new Button(),browse=new Button();
     readonly Label status=new Label(); readonly ProgressBar progress=new ProgressBar(); bool busy,installed;
     public InstallerForm() {
-        Text="Generals GPT Mod — установка"; ClientSize=new Size(620,270); FormBorderStyle=FormBorderStyle.FixedDialog;
+        Text="AKU9992 — установка"; ClientSize=new Size(620,270); FormBorderStyle=FormBorderStyle.FixedDialog;
         MaximizeBox=false; StartPosition=FormStartPosition.CenterScreen; Font=new Font("Segoe UI",10);
         var title=new Label {Text="C&C Generals + Zero Hour · изменённый клиент x64",AutoSize=true,Location=new Point(20,20)};
         var hint=new Label {Text="Выберите общую папку для CaCG и CaCGZH.\nПосле установки используйте ярлыки на рабочем столе.",AutoSize=true,Location=new Point(20,55)};
-        folder.SetBounds(20,110,480,30); folder.Text=Directory.Exists(@"E:\C&C ZH GPTMOD")?@"E:\C&C ZH GPTMOD":Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Generals GPT Mod");
+#if NATIVE12
+        Text="AKU9992 — Native DirectX 12 · тестовая сборка";
+        title.Text="C&C Generals + Zero Hour · Native DirectX 12 / x64";
+        folder.SetBounds(20,110,480,30);
+        folder.Text=Path.Combine(Path.GetPathRoot(Environment.SystemDirectory),"Games","AKU9992");
+#else
+        folder.SetBounds(20,110,480,30); folder.Text=Directory.Exists(@"E:\C&C ZH GPTMOD")?@"E:\C&C ZH GPTMOD":Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AKU9992");
+#endif
+#if PATCH
+        Text="AKU9992 — обновление";
+        title.Text="AKU9992 · патч Native DirectX 12 / x64";
+        hint.Text="Выберите существующую общую папку CaCG и CaCGZH.\nЗакройте обе игры перед установкой патча.";
+#endif
         browse.Text="Обзор…"; browse.SetBounds(510,110,90,30); browse.Click+=(s,e)=>{using(var dialog=new FolderBrowserDialog()){dialog.SelectedPath=folder.Text;if(dialog.ShowDialog(this)==DialogResult.OK)folder.Text=dialog.SelectedPath;}};
         status.SetBounds(20,150,580,40); status.Text="Готов к установке. Сохранения и настройки игрока остаются в Документах.";
         progress.SetBounds(20,195,580,18); install.Text="Установить"; install.SetBounds(460,225,140,30);
@@ -159,7 +183,7 @@ sealed class InstallerForm : Form {
             await Task.Run(()=>InstallEngine.Run(destination,false,true,(value,name)=>BeginInvoke(new Action(()=>{progress.Value=value;status.Text="Установка: "+name;}))));
             status.Text="Установлено. Запускайте Generals и Zero Hour с ярлыков рабочего стола.";
             installed=true; install.Text="Готово";
-        } catch(Exception e) {status.Text="Установка не завершена.";MessageBox.Show(this,e.Message,Text,MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        } catch(Exception) {status.Text="Установка не завершена.";MessageBox.Show(this,"Не удалось завершить установку. Проверьте архив, свободное место и доступ к выбранной папке.",Text,MessageBoxButtons.OK,MessageBoxIcon.Error);}
         finally {busy=false; install.Enabled=browse.Enabled=folder.Enabled=true;}
     }
 }
@@ -170,9 +194,9 @@ static class Setup {
             if(args.Length>=1 && args[0]=="--verify") {InstallEngine.Run(null,true,false,null);return 0;}
             if(args.Length>=2 && args[0]=="--extract") {InstallEngine.Run(args[1],false,false,null);return 0;}
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new InstallerForm());return 0;
-        } catch(Exception e) {
-            if(args.Length>0) File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath),"setup-error.log"),e.ToString());
-            else MessageBox.Show(e.Message,"Generals GPT Mod",MessageBoxButtons.OK,MessageBoxIcon.Error);
+        } catch(Exception) {
+            if(args.Length>0) File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath),"setup-error.log"),"AKU9992: operation failed.");
+            else MessageBox.Show("Не удалось завершить операцию с установочным архивом.","AKU9992",MessageBoxButtons.OK,MessageBoxIcon.Error);
             return 1;
         }
     }

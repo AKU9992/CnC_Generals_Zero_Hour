@@ -33,6 +33,26 @@ int wmain(int argc,wchar_t** argv){try{
     float maximum=0;for(UINT i=0;i<10;++i){Sleep(50);maximum=std::max(maximum,peak(GetCurrentProcessId()));}
     require(maximum>.001f,"native source output is silent");stop_sample((HSAMPLE)s);UINT before=s->position();Sleep(80);require(s->position()==before,"pause failed");resume_sample((HSAMPLE)s);
     for(UINT i=0;i<30&&!finished;++i){Sleep(50);pump();}require(finished==1,"EOS callback missing or duplicated");release(s);
+    // 3D handles are pooled without init_sample; new files reset the playback rate.
+    auto reused=allocate_3D_sample_handle(nullptr);
+    for(UINT hz:{44100u,22050u,11025u,48000u,22050u}){
+        const UINT frames=hz/5;std::vector<unsigned char> wavData(44+frames*2);
+        auto* p=wavData.data();memcpy(p,"RIFF",4);put32(p+4,UINT(wavData.size()-8));
+        memcpy(p+8,"WAVEfmt ",8);put32(p+16,16);put16(p+20,WAVE_FORMAT_PCM);put16(p+22,1);
+        put32(p+24,hz);put32(p+28,hz*2);put16(p+32,2);put16(p+34,16);
+        memcpy(p+36,"data",4);put32(p+40,frames*2);
+        require(set_3D_sample_file(reused,p)!=0,"pooled 3D WAV load");
+        require(sample_3D_playback_rate(reused)==S32(hz),"pooled sample retained previous rate");
+        float ratio=0;sample(reused)->voice->GetFrequencyRatio(&ratio);
+        require(std::abs(ratio-1.f)<.00001f,"pooled voice retained pitch ratio");
+        set_3D_sample_playback_rate(reused,S32(hz*1.25f));Sleep(20);
+        sample(reused)->voice->GetFrequencyRatio(&ratio);
+        printf("Pooled pitch: %u Hz, requested %d Hz, voice ratio %.6f\n",hz,sample_3D_playback_rate(reused),ratio);
+        require(std::abs(ratio-float(sample_3D_playback_rate(reused))/hz)<.0001f,"intentional pitch shift lost");
+        start_3D_sample(reused);Sleep(40);end_3D_sample(reused);
+    }
+    release_3D_sample_handle(reused);
+    puts("PASS pooled 3D rates 11025/22050/44100/48000 Hz, default voice ratio and intentional pitch.");
     // Known IMA ADPCM block: zero predictor and zero codes produce zero PCM.
     unsigned char ima[52]{};memcpy(ima,"RIFF",4);put32(ima+4,44);memcpy(ima+8,"WAVEfmt ",8);put32(ima+16,20);put16(ima+20,WAVE_FORMAT_IMA_ADPCM);put16(ima+22,1);put32(ima+24,22050);put16(ima+32,8);put16(ima+34,4);put16(ima+36,2);put16(ima+38,9);memcpy(ima+40,"data",4);put32(ima+44,4);
     PCM decoded;require(decodeWav(ima,sizeof(ima),decoded)&&decoded.bytes.size()==2,"IMA decoder");

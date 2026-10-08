@@ -6,6 +6,7 @@
 #include <array>
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 
 namespace generals_mods::native12 {
 static_assert(sizeof(void*) == 8, "The native renderer is AMD64 only");
@@ -36,6 +37,7 @@ public:
     // Output pixels use RGBA8 order with no row padding.
     HRESULT endFrame(UINT syncInterval = 0, std::vector<uint8_t>* pixels = nullptr);
     HRESULT waitIdle();
+    void retainUpload(ID3D12Resource* resource) { if(resource) frames_[index_].uploads.emplace_back(resource); }
     void shutdown();
 
     ID3D12Device* device() const { return device_.Get(); }
@@ -43,6 +45,8 @@ public:
     IDXGISwapChain3* swapchain() const { return swap_.Get(); }
     ID3D12GraphicsCommandList* commands() const { return recording_ ? commands_.Get() : nullptr; }
     ID3D12Resource* target() const { return swap_ ? frames_[swap_->GetCurrentBackBufferIndex()].target.Get() : nullptr; }
+    UINT presentFlags(UINT sync) const { return allowTearing_ && sync==0 ? DXGI_PRESENT_ALLOW_TEARING : 0; }
+    D3D12_CPU_DESCRIPTOR_HANDLE currentTargetHandle() const { return targetHandle(); }
     UINT width() const { return width_; }
     UINT height() const { return height_; }
     const DXGI_ADAPTER_DESC1& adapterDescription() const { return adapterDescription_; }
@@ -53,10 +57,14 @@ private:
         Ptr<ID3D12Resource> target;
         Ptr<ID3D12Resource> upload;
         uint8_t* mapped = nullptr;
+        std::vector<Ptr<ID3D12Resource>> uploads;
         UINT64 fenceValue = 0;
         UINT uploadOffset = 0;
     };
     static constexpr UINT uploadBytes = 4 * 1024 * 1024;
+    void initializeProfile();
+    void readProfile();
+    void writeProfile(double beforeSubmit,double afterSubmit);
     HRESULT createTargets();
     HRESULT createPipeline();
     HRESULT wait(UINT64 value);
@@ -76,7 +84,14 @@ private:
     DXGI_ADAPTER_DESC1 adapterDescription_{};
     HANDLE event_ = nullptr;
     UINT width_ = 0, height_ = 0, index_ = 0, targetStride_ = 0;
+    Ptr<ID3D12QueryHeap> timestampHeap_;
+    Ptr<ID3D12Resource> timestampReadback_;
+    Ptr<IDXGIAdapter3> profileAdapter_;
+    UINT64* mappedTimestamps_=nullptr;UINT64 timestampFrequency_=0,profileSerial_=0;
+    FILE* profileFile_=nullptr;double profileStartMs_=0,frameStartMs_=0,fenceWaitMs_=0,gpuMs_=0;
+    UINT64 gpuSerial_=0;
+    std::array<UINT64,frameCount> submittedSerials_{};
     UINT64 nextFence_ = 1;
-    bool recording_ = false;
+    bool recording_ = false,allowTearing_ = false;
 };
 }

@@ -33,7 +33,13 @@ Varying VS(Input i){
  o.current=options.x!=0 ? i.position : mul(i.position,current);
  o.previous=options.x!=0 ? i.position : mul(i.previous,previous);
  if(waterOptions.y!=0){o.current=float4(dot(i.position,waterVertex[2]),dot(i.position,waterVertex[3]),dot(i.position,waterVertex[4]),dot(i.position,waterVertex[5]));o.previous=o.current;}
- o.position=o.current;o.position.xy+=outputSize.xy*float2(2,-2)/outputSize.zw*o.position.w;
+ // D3D8 rasterizes at integer pixel centers; D3D12 uses centers at +0.5.
+ // XYZRHW positions already receive this correction during FVF conversion.
+ // W3D XYZ GUI geometry includes a -0.5 bias, so restore the legacy raster
+ // convention here too, otherwise adjacent atlas tiles expose vertical seams.
+ o.position=o.current;
+ if(options.x==0)o.position.xy+=float2(1,-1)/outputSize.zw*o.position.w;
+ o.position.xy+=outputSize.xy*float2(2,-2)/outputSize.zw*o.position.w;
  o.color=i.color;o.specular=i.specular;
  float3 normal=normalize(mul(float4(i.normal,0),normalTransform).xyz);
  if(options.y!=0 && options.x==0){
@@ -77,8 +83,8 @@ float4 argument(uint arg,float4 diffuse,float4 sampleColor,float4 value,float4 s
  if(kind==0)result=diffuse;else if(kind==2)result=sampleColor;else if(kind==3)result=textureFactor;else if(kind==4)result=specular;
  if(arg&32)result=result.aaaa;if(arg&16)result=1-result;return result;
 }
-float4 operation(uint op,float4 a,float4 b,float4 diffuse,float4 sampleColor,float4 value){
- if(op==2)return a;if(op==3)return b;if(op==4)return a*b;if(op==5)return 2*a*b;if(op==6)return 4*a*b;
+float4 operation(uint op,float4 a,float4 b,float4 arg0,float4 diffuse,float4 sampleColor,float4 value){
+ if(op==1)return value;if(op==25)return a*b+arg0;if(op==26)return lerp(b,a,arg0);if(op==2)return a;if(op==3)return b;if(op==4)return a*b;if(op==5)return 2*a*b;if(op==6)return 4*a*b;
  if(op==7)return a+b;if(op==8)return a+b-.5;if(op==9)return 2*(a+b-.5);if(op==10)return a-b;if(op==11)return a+b-a*b;
  if(op==12)return lerp(b,a,diffuse.a);if(op==13)return lerp(b,a,sampleColor.a);if(op==14)return lerp(b,a,textureFactor.a);
  if(op==15)return a+b*(1-sampleColor.a);if(op==16)return lerp(b,a,value.a);if(op==24)return dot(a.rgb*2-1,b.rgb*2-1);
@@ -107,7 +113,8 @@ Targets PS(Varying i){
   }
   float4 a=argument(colorOp[stage].y,i.color,sampled,value,i.specular),b=argument(colorOp[stage].z,i.color,sampled,value,i.specular);
   float4 alphaA=argument(alphaOp[stage].y,i.color,sampled,value,i.specular),alphaB=argument(alphaOp[stage].z,i.color,sampled,value,i.specular);
-  float4 rgb=operation(colorOp[stage].x,a,b,i.color,sampled,value),alpha=operation(alphaOp[stage].x,alphaA,alphaB,i.color,sampled,value);
+  float4 arg0=argument(colorOp[stage].w,i.color,sampled,value,i.specular),alpha0=argument(alphaOp[stage].w,i.color,sampled,value,i.specular);
+  float4 rgb=operation(colorOp[stage].x,a,b,arg0,i.color,sampled,value),alpha=operation(alphaOp[stage].x,alphaA,alphaB,alpha0,i.color,sampled,value);
   value=float4(saturate(rgb.rgb),saturate(alpha.a));
  }
  if(waterOptions.x!=0){

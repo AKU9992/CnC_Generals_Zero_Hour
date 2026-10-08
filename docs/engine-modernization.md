@@ -34,7 +34,6 @@ FramesPerSecondLimit = 30
 
 - Установлены Microsoft C++ Build Tools, Windows SDK 10.0.26100 и CMake.
 - Собран и запущен отдельный x64 `D3D12Capabilities.exe`: аппаратное устройство
-  D3D12 создано на NVIDIA GeForce RTX 4070 Ti SUPER, feature level 12_2,
   выделенная видеопамять около 16063 MiB. Это проверка устройства, не игровой
   рендерер и не тест FPS.
 - В обеих исходных версиях защищён расчёт ожидания от нулевого/отрицательного

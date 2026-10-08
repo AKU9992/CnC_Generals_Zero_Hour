@@ -110,7 +110,7 @@ struct Sample:IXAudio2VoiceCallback {
         else {matrix[0]=std::min(1.f,2*(1-p));matrix[3]=std::min(1.f,2*p);}
         voice->SetOutputMatrix(master,pcm.format.nChannels,2,matrix);if(rate>0)voice->SetFrequencyRatio(std::clamp(float(rate)/pcm.format.nSamplesPerSec,.01f,4.f));
     }
-    bool set(PCM&& data){destroy();pcm=std::move(data);beginFrame=0;HRESULT hr=engine?engine->CreateSourceVoice(&voice,&pcm.format,0,4,this):E_UNEXPECTED;if(FAILED(hr)){log("Create source voice failed",hr);return false;}if(!rate)rate=pcm.format.nSamplesPerSec;apply();return true;}
+    bool set(PCM&& data){destroy();pcm=std::move(data);beginFrame=0;rate=pcm.format.nSamplesPerSec;HRESULT hr=engine?engine->CreateSourceVoice(&voice,&pcm.format,0,4,this):E_UNEXPECTED;if(FAILED(hr)){log("Create source voice failed",hr);return false;}apply();return true;}
     void start(){if(!voice||pcm.bytes.empty())return;playing=false;completed=false;voice->Stop();voice->FlushSourceBuffers();XAUDIO2_VOICE_STATE state{};voice->GetState(&state);baseline=state.SamplesPlayed;
         XAUDIO2_BUFFER buffer{};buffer.Flags=XAUDIO2_END_OF_STREAM;buffer.AudioBytes=UINT(pcm.bytes.size());buffer.pAudioData=pcm.bytes.data();buffer.PlayBegin=std::min<UINT>(beginFrame,buffer.AudioBytes/pcm.format.nBlockAlign-1);
         if(!loops||loops>XAUDIO2_MAX_LOOP_COUNT+1){buffer.LoopCount=XAUDIO2_LOOP_INFINITE;}else if(loops>1)buffer.LoopCount=loops-1;

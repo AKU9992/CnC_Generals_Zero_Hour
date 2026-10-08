@@ -43,9 +43,11 @@ HRESULT uploadTexture(Device& renderer,TextureData& texture){
     buffer.DepthOrArraySize=buffer.MipLevels=1;buffer.SampleDesc.Count=1;buffer.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     const auto cpu=heap(D3D12_HEAP_TYPE_UPLOAD);
     if(SUCCEEDED(hr))hr=device->CreateCommittedResource(&cpu,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&upload));
-    if(SUCCEEDED(hr))hr=device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator));
-    if(SUCCEEDED(hr))hr=device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&commands));
+    const bool inFrame=renderer.commands()!=nullptr;
+    if(!inFrame && SUCCEEDED(hr))hr=device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator));
+    if(!inFrame && SUCCEEDED(hr))hr=device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&commands));
     if(FAILED(hr))return hr;
+    auto* copyCommands=inFrame ? renderer.commands() : commands.Get();
     void* mapped=nullptr;D3D12_RANGE noRead{0,0};hr=upload->Map(0,&noRead,&mapped);if(FAILED(hr))return hr;
     for(UINT i=0;i<count;++i){
         const auto& level=texture.levels[i];
@@ -54,12 +56,19 @@ HRESULT uploadTexture(Device& renderer,TextureData& texture){
             level.bytes.data()+UINT64(row)*level.rowBytes,static_cast<size_t>(rowSizes[i]));
         D3D12_TEXTURE_COPY_LOCATION source{},destination{};source.pResource=upload.Get();source.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;source.PlacedFootprint=footprints[i];
         destination.pResource=target.Get();destination.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;destination.SubresourceIndex=i;
-        commands->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+        copyCommands->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
     }
     upload->Unmap(0,nullptr);
     D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.pResource=target.Get();
     b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;b.Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;b.Transition.StateAfter=D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    commands->ResourceBarrier(1,&b);hr=commands->Close();if(FAILED(hr))return hr;
+    copyCommands->ResourceBarrier(1,&b);
+    if(inFrame){
+        // Copies and consuming draws share one command list. Immutable targets
+        // preserve earlier draws; upload memory lives until this frame's fence.
+        renderer.retainUpload(upload.Get());renderer.retainUpload(target.Get());
+        texture.resource=target;texture.state=D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;texture.dirty=false;return S_OK;
+    }
+    hr=commands->Close();if(FAILED(hr))return hr;
     ID3D12CommandList* lists[]={commands.Get()};renderer.queue()->ExecuteCommandLists(1,lists);
     hr=renderer.waitIdle();if(FAILED(hr))return hr;
     texture.resource=target;texture.state=D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;texture.dirty=false;return S_OK;

@@ -38,7 +38,7 @@ if($W3D){
 if($LASTEXITCODE -ne 0){throw 'Native D3D12 renderer build failed.'}
 if($Neural){& (Join-Path $PSScriptRoot 'Copy-StreamlineRuntime.ps1') -ExecutableDirectory $build}
 if($Test){
-    $testNames=@('NativeRenderer12Tests')
+    $testNames=@('ScratchMapCleanupTests','FrameControlTests','NativeRenderer12Tests')
     if($Neural){$testNames+=@('NativeDlss12Tests','NativeScene12Tests')}
     if($W3D){$testNames+='W3DNative12Tests'}
     $results=@()

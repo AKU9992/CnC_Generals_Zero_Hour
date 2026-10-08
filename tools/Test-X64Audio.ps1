@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$BuildOnly)
+param([switch]$BuildOnly,[string]$TrackPath)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot -Parent
 $output=Join-Path $repo '.build/audio-tests'
@@ -12,4 +12,4 @@ $cmd=Join-Path $output 'build.cmd'
 [IO.File]::WriteAllLines($cmd,@('@echo off',('call "'+$vs+'\VC\Auxiliary\Build\vcvars64.bat"'),'if errorlevel 1 exit /b %errorlevel%',('cl /nologo /EHsc /std:c++17 /I"'+$include+'" "'+$PSScriptRoot+'\native\X64AudioTests.cpp" /Fo"'+$output+'\tests.obj" /Fe"'+$exe+'"'),'exit /b %errorlevel%'),[Text.Encoding]::Default)
 & cmd.exe /d /c $cmd
 if($LASTEXITCODE -ne 0){throw 'Native audio test compilation failed.'}
-if(-not $BuildOnly){Push-Location $output;try{& $exe 'E:\C&C ZH GPTMOD\CaCGZH\Data\Audio\Tracks\USA_01.mp3';if($LASTEXITCODE -ne 0){throw 'Native audio test failed.'}}finally{Pop-Location}}
+if(-not $BuildOnly){Push-Location $output;try{if(-not $TrackPath){$TrackPath=Join-Path $repo '.build/original-client/CaCGZH/Data/Audio/Tracks/USA_01.mp3'};& $exe $TrackPath;if($LASTEXITCODE -ne 0){throw 'Native audio test failed.'}}finally{Pop-Location}}

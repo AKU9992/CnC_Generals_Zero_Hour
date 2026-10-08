@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$GameDirectory,[ValidateSet('Generals','ZeroHour')][string]$Edition='Generals',[ValidateSet('Off','DLAA','DLSSQuality')][string]$NeuralMode='Off',[ValidateRange(5,40)][int]$Seconds=20,[int]$Width=1280,[int]$Height=720,[string]$ShellMap,[string]$BaseGameDirectory)
+param([string]$GameDirectory,[ValidateSet('Generals','ZeroHour')][string]$Edition='Generals',[ValidateSet('Off','DLAA','DLSSQuality')][string]$NeuralMode='Off',[ValidateRange(5,40)][int]$Seconds=20,[int]$Width=1280,[int]$Height=720,[string]$ShellMap,[string]$BaseGameDirectory,[string]$GuiLayout,[switch]$InitializeOptions)
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 if(-not $GameDirectory){$GameDirectory=Join-Path $root $(if($Edition -eq 'Generals'){'.build/original-client/CaCG'}else{'.build/original-client/CaCGZH'});if($Edition -eq 'ZeroHour' -and -not $BaseGameDirectory){$BaseGameDirectory=Join-Path $root '.build/original-client/CaCG'}}
@@ -20,7 +20,7 @@ $null=New-Item -ItemType Directory -Path $userDirectory -Force
 [IO.File]::WriteAllText((Join-Path $userDirectory 'Options.ini'),"StaticGameLOD = High`r`nIdealStaticGameLOD = High`r`nUseShadowVolumes = yes`r`nUseShadowDecals = yes`r`n")
 $capture=Join-Path $root ('.build/native12/game-'+$Edition+'-'+$NeuralMode)
 if(Test-Path -LiteralPath ($capture+'.native.bmp')){Remove-Item -LiteralPath ($capture+'.native.bmp')}
-$variables=@{GENERALS_RENDERER='native12';GENERALS_NEURAL_AA=$NeuralMode;GENERALS_TEST_QUIT_SECONDS=[string]$Seconds;GENERALS_TEST_USER_DATA=$userDirectory+'\';GENERALS_TEST_BASE_GAME=$BaseGameDirectory;GENERALS_TEST_SHELL_MAP=$ShellMap;GENERALS_X64_STARTUP_TRACE='1';GENERALS_CAPTURE_FRAME=$capture;GENERALS_RENDER_FPS='0'}
+$variables=@{GENERALS_TEST_GUI_INITIALIZE=$(if($InitializeOptions){"1"}else{$null});GENERALS_TEST_GUI_LAYOUT=$GuiLayout;GENERALS_RENDERER='native12';GENERALS_NEURAL_AA=$NeuralMode;GENERALS_TEST_QUIT_SECONDS=[string]$Seconds;GENERALS_TEST_USER_DATA=$userDirectory+'\';GENERALS_TEST_BASE_GAME=$BaseGameDirectory;GENERALS_TEST_SHELL_MAP=$ShellMap;GENERALS_X64_STARTUP_TRACE='1';GENERALS_CAPTURE_FRAME=$capture;GENERALS_RENDER_FPS='0'}
 $previous=@{};$process=$null
 try{
     foreach($name in $variables.Keys){$previous[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,$variables[$name])}

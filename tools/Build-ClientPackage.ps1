@@ -1,8 +1,8 @@
 [CmdletBinding()]
-param([string]$GameRoot='E:\C&C ZH GPTMOD',[string]$OutputDirectory,[switch]$ReuseArchive)
+param([string]$GameRoot='E:\C&C ZH GPTMOD',[string]$OutputDirectory,[switch]$ReuseArchive,[switch]$Native12)
 $ErrorActionPreference='Stop'
 $repository=Split-Path $PSScriptRoot -Parent
-$build=Join-Path $repository '.build\client-release'
+$build=Join-Path $repository $(if($Native12){'.build\native-client-release'}else{'.build\client-release'})
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $repository 'dist'}
 $null=New-Item -ItemType Directory -Path $OutputDirectory -Force
 Add-Type -AssemblyName System.IO.Compression
@@ -12,6 +12,12 @@ foreach($edition in @('CaCG','CaCGZH')) {
     $validation=Get-Content (Join-Path $build ($edition+'-shortcut-validation.json')) -Raw|ConvertFrom-Json
     if(-not $validation.rendererVerified -or -not $validation.audioVerified -or -not $validation.gracefulExitVerified -or
         $validation.executableSha256 -ne (Get-FileHash (Join-Path $game 'Client\generals-client.exe')).Hash){throw ('A current desktop shortcut probe is required: '+$edition)}
+    if($Native12){
+        if(-not $validation.neuralVerified -or -not $validation.waterVerified -or -not $validation.shadowVerified -or
+            $validation.backendSha256 -ne (Get-FileHash (Join-Path $game 'Client/generals-native12.dll')).Hash -or
+            $validation.launcherSha256 -ne (Get-FileHash (Join-Path $game 'generals.exe')).Hash){throw ('A current native client probe is required: '+$edition)}
+        if(Test-Path -LiteralPath (Join-Path $game 'Client/generals-d3d12.dll')){throw 'Native package must not contain the old renderer bridge.'}
+    }
     $candidates=@(Get-ChildItem -LiteralPath $game -File|Where-Object {
         $_.Extension -in @('.big','.ico','.ttf') -or $_.Name -in @('generals.exe','game.dat','Generals.dat','langdata.dat','00000000.016','00000000.256')
     })

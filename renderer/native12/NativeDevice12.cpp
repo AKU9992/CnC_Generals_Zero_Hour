@@ -1,11 +1,15 @@
 #include "NativeDevice12.h"
+#include "NativeFrameControl.h"
 #include <d3dcompiler.h>
 #include <d3d12sdklayers.h>
 #include <cstring>
 #include <limits>
+#include <string>
+#include <cstdlib>
 
 namespace generals_mods::native12 {
 namespace {
+double cpuMilliseconds(){static LARGE_INTEGER frequency=[](){LARGE_INTEGER f{};QueryPerformanceFrequency(&f);return f;}();LARGE_INTEGER now{};QueryPerformanceCounter(&now);return double(now.QuadPart)*1000/double(frequency.QuadPart);}
 D3D12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE type) {
     D3D12_HEAP_PROPERTIES result{};
     result.Type = type;
@@ -60,11 +64,15 @@ HRESULT Device::initialize(HWND window, UINT width, UINT height, bool debug) {
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = frameCount;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    BOOL supported=FALSE;
+    allowTearing_=SUCCEEDED(factory_->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING,&supported,sizeof(supported))) && supported;
+    desc.Flags=allowTearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
     Ptr<IDXGISwapChain1> swap;
     hr = factory_->CreateSwapChainForHwnd(queue_.Get(), window, &desc, nullptr, nullptr, &swap);
     if (SUCCEEDED(hr)) hr = swap.As(&swap_);
     if (SUCCEEDED(hr)) hr = factory_->MakeWindowAssociation(window, DXGI_MWA_NO_ALT_ENTER);
     if (FAILED(hr)) return hr;
+    frameControl().configure(window);
     width_ = width; height_ = height;
     D3D12_DESCRIPTOR_HEAP_DESC targetDesc{};
     targetDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; targetDesc.NumDescriptors = frameCount;
@@ -90,6 +98,7 @@ HRESULT Device::initialize(HWND window, UINT width, UINT height, bool debug) {
     if (SUCCEEDED(hr)) hr = commands_->Close();
     if (SUCCEEDED(hr)) hr = createPipeline();
     if (SUCCEEDED(hr)) hr = createTargets();
+    if (SUCCEEDED(hr)) initializeProfile();
     return hr;
 }
 
@@ -199,11 +208,15 @@ HRESULT Device::beginFrame(const float clear[4]) {
     if (!swap_ || recording_ || !clear) return E_UNEXPECTED;
     index_ = swap_->GetCurrentBackBufferIndex();
     auto& frame = frames_[index_];
+    const double beforeWait=profileFile_?cpuMilliseconds():0;
     HRESULT hr = wait(frame.fenceValue);
+    if(profileFile_){frameStartMs_=cpuMilliseconds();fenceWaitMs_=frameStartMs_-beforeWait;readProfile();}
     if (SUCCEEDED(hr)) hr = frame.allocator->Reset();
     if (SUCCEEDED(hr)) hr = commands_->Reset(frame.allocator.Get(), pipeline_.Get());
     if (FAILED(hr)) return hr;
+    frame.uploads.clear(); // The fence protects copies recorded in this frame.
     recording_ = true; frame.uploadOffset = 0;
+    if(timestampHeap_)commands_->EndQuery(timestampHeap_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,index_*2);
     barrier(frame.target.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     auto handle = targetHandle();
     commands_->ClearRenderTargetView(handle, clear, 0, nullptr);
@@ -258,14 +271,18 @@ HRESULT Device::endFrame(UINT syncInterval, std::vector<uint8_t>* pixels) {
         commands_->CopyTextureRegion(&to,0,0,0,&from,nullptr);
         barrier(frame.target.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_PRESENT);
     } else barrier(frame.target.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PRESENT);
+    if(timestampHeap_){commands_->EndQuery(timestampHeap_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,index_*2+1);commands_->ResolveQueryData(timestampHeap_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,index_*2,2,timestampReadback_.Get(),index_*2*sizeof(UINT64));}
     hr = commands_->Close(); recording_ = false;
     if (FAILED(hr)) return hr;
     ID3D12CommandList* lists[] = {commands_.Get()};
+    const double beforeSubmit=profileFile_?cpuMilliseconds():0;
     queue_->ExecuteCommandLists(1,lists);
+    const double afterSubmit=profileFile_?cpuMilliseconds():0;
     // Signal even if Present fails, so allocators never reuse in-flight work.
     hr = signal(frame.fenceValue);
     if (FAILED(hr)) return hr;
-    const HRESULT presentResult = swap_->Present(syncInterval,0);
+    const HRESULT presentResult = swap_->Present(syncInterval,presentFlags(syncInterval));
+    if(profileFile_)writeProfile(beforeSubmit,afterSubmit);
     if (pixels) {
         hr = wait(frame.fenceValue);
         if (FAILED(hr)) return hr;
@@ -286,7 +303,7 @@ HRESULT Device::resize(UINT width, UINT height) {
     HRESULT hr = waitIdle();
     if (FAILED(hr)) return hr;
     for (auto& frame : frames_) frame.target.Reset();
-    hr = swap_->ResizeBuffers(frameCount,width,height,DXGI_FORMAT_R8G8B8A8_UNORM,0);
+    hr = swap_->ResizeBuffers(frameCount,width,height,DXGI_FORMAT_R8G8B8A8_UNORM,allowTearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
     if (FAILED(hr)) { createTargets(); return hr; }
     width_ = width; height_ = height;
     return createTargets();
@@ -312,14 +329,52 @@ HRESULT Device::checkDebugErrors() const {
 void Device::shutdown() {
     if (recording_ && commands_) { commands_->Close(); recording_=false; }
     waitIdle();
+    if(profileFile_){fclose(profileFile_);profileFile_=nullptr;}
+    if(timestampReadback_ && mappedTimestamps_){D3D12_RANGE noWrite{0,0};timestampReadback_->Unmap(0,&noWrite);}
+    mappedTimestamps_=nullptr;timestampReadback_.Reset();timestampHeap_.Reset();profileAdapter_.Reset();submittedSerials_.fill(0);
     commands_.Reset(); pipeline_.Reset(); root_.Reset();
     for (auto& frame : frames_) {
         if (frame.mapped && frame.upload) frame.upload->Unmap(0,nullptr);
-        frame.mapped=nullptr; frame.upload.Reset(); frame.target.Reset(); frame.allocator.Reset();
+        frame.uploads.clear(); frame.mapped=nullptr; frame.upload.Reset(); frame.target.Reset(); frame.allocator.Reset();
         frame.fenceValue=0; frame.uploadOffset=0;
     }
     targets_.Reset(); swap_.Reset(); fence_.Reset(); queue_.Reset(); device_.Reset(); factory_.Reset();
     if (event_) { CloseHandle(event_); event_=nullptr; }
-    width_=height_=index_=targetStride_=0; nextFence_=1; adapterDescription_={};
+    width_=height_=index_=targetStride_=0; nextFence_=1; allowTearing_=false; adapterDescription_={};
+}
+}
+
+namespace generals_mods::native12 {
+void Device::initializeProfile(){
+ if(!getenv("GENERALS_FPS_PROFILE") || strcmp(getenv("GENERALS_FPS_PROFILE"),"1")!=0)return;
+ D3D12_QUERY_HEAP_DESC query{};query.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;query.Count=frameCount*2;
+ HRESULT hr=device_->CreateQueryHeap(&query,IID_PPV_ARGS(&timestampHeap_));
+ const auto props=heap(D3D12_HEAP_TYPE_READBACK);const auto desc=buffer(frameCount*2*sizeof(UINT64));
+ if(SUCCEEDED(hr))hr=device_->CreateCommittedResource(&props,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&timestampReadback_));
+ if(SUCCEEDED(hr))hr=queue_->GetTimestampFrequency(&timestampFrequency_);
+ if(SUCCEEDED(hr))hr=timestampReadback_->Map(0,nullptr,reinterpret_cast<void**>(&mappedTimestamps_));
+ if(SUCCEEDED(hr)){
+  Ptr<IDXGIAdapter1> adapter;factory_->EnumAdapterByLuid(device_->GetAdapterLuid(),IID_PPV_ARGS(&adapter));if(adapter)adapter.As(&profileAdapter_);
+  const char* directory=getenv("GENERALS_TEST_USER_DATA");std::string path=directory?directory:"";path+="AKU9992-render-timing.csv";
+  if(fopen_s(&profileFile_,path.c_str(),"w")!=0)profileFile_=nullptr;
+  if(profileFile_){fprintf(profileFile_,"serial,elapsed_ms,cpu_record_ms,fence_wait_ms,submit_ms,present_ms,gpu_serial,gpu_ms,local_usage_mib,local_budget_mib\n");profileStartMs_=cpuMilliseconds();}
+ }
+ if(FAILED(hr) || !profileFile_){
+  if(mappedTimestamps_){D3D12_RANGE noWrite{0,0};timestampReadback_->Unmap(0,&noWrite);}
+  timestampHeap_.Reset();timestampReadback_.Reset();mappedTimestamps_=nullptr;timestampFrequency_=0;
+ }
+}
+void Device::readProfile(){
+ if(submittedSerials_[index_] && timestampFrequency_){
+  const UINT64 start=mappedTimestamps_[index_*2],end=mappedTimestamps_[index_*2+1];
+  if(end>=start){gpuMs_=double(end-start)*1000/double(timestampFrequency_);gpuSerial_=submittedSerials_[index_];}
+ }
+}
+void Device::writeProfile(double beforeSubmit,double afterSubmit){
+ const double afterPresent=cpuMilliseconds();DXGI_QUERY_VIDEO_MEMORY_INFO memory{};
+ if(profileAdapter_)profileAdapter_->QueryVideoMemoryInfo(0,DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&memory);
+ submittedSerials_[index_]=++profileSerial_;
+ fprintf(profileFile_,"%llu,%.6f,%.6f,%.6f,%.6f,%.6f,%llu,%.6f,%.6f,%.6f\n",profileSerial_,afterPresent-profileStartMs_,beforeSubmit-frameStartMs_,fenceWaitMs_,afterSubmit-beforeSubmit,afterPresent-afterSubmit,gpuSerial_,gpuMs_,double(memory.CurrentUsage)/1048576,double(memory.Budget)/1048576);
+ if(profileSerial_%300==0)fflush(profileFile_);
 }
 }

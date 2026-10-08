@@ -26,25 +26,25 @@ int main(int argc, char **argv)
     {
         FramePerformanceLog enabled(argv[1]);
         for (unsigned long frame = 1; frame <= 2; ++frame) {
-            enabled.beginFrame(); Sleep(2); enabled.endUpdate(); Sleep(3);
+            enabled.beginFrame(); akuProfileCall(AkuLogic, []{Sleep(2);}); enabled.endUpdate(); Sleep(3);
             enabled.endFrame(frame * 10, frame == 2);
         }
     }
     SetEnvironmentVariableA("GENERALS_FPS_PROFILE", NULL);
     FILE *file = fopen(path, "r");
     if (!file) return 5;
-    char line[256];
+    char line[512];
     if (!fgets(line, sizeof(line), file)
-        || strcmp(line, "sample,logic_frame,in_game,update_ms,limiter_ms,frame_ms\n")) return 6;
+        || strcmp(line, "sample,logic_frame,in_game,update_ms,limiter_ms,frame_ms,logic_ms,audio_ms,client_ms,messages_ms,network_ms,draw_ms,drawables_ms,ai_ms,pathfind_ms,target_fps\n")) return 6;
     for (unsigned long expected = 1; expected <= 2; ++expected) {
         unsigned long sample = 0, logicFrame = 0;
         int inGame = 0;
-        double updateMs = 0, waitMs = 0, totalMs = 0;
+        double updateMs = 0, waitMs = 0, totalMs = 0, logicMs=0;
         if (!fgets(line, sizeof(line), file)
-            || sscanf(line, "%lu,%lu,%d,%lf,%lf,%lf", &sample, &logicFrame,
-                      &inGame, &updateMs, &waitMs, &totalMs) != 6) return 7;
+            || sscanf(line, "%lu,%lu,%d,%lf,%lf,%lf,%lf", &sample, &logicFrame,
+                      &inGame, &updateMs, &waitMs, &totalMs, &logicMs) != 7) return 7;
         if (sample != expected || logicFrame != expected * 10 || inGame != (expected == 2)
-            || updateMs < 0 || waitMs < 0 || totalMs <= 0
+            || updateMs < 0 || waitMs < 0 || totalMs <= 0 || logicMs<=0 || logicMs>updateMs
             || std::fabs(totalMs - updateMs - waitMs) > 0.000002) return 8;
     }
     if (fgets(line, sizeof(line), file)) return 9;

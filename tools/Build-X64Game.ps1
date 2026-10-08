@@ -73,6 +73,11 @@ target_link_libraries(d3d8lib INTERFACE d3dx8_compat)
 & (Join-Path $PSScriptRoot 'Apply-X64TextureDiagnostics.ps1') -SourcePath $sourcePath
 if($Edition -eq 'Generals'){ & (Join-Path $PSScriptRoot 'Apply-GeneralsStartupPatch.ps1') -SourcePath $sourcePath }
 if($Native12){ & (Join-Path $PSScriptRoot 'Apply-NativeW3DPatch.ps1') -SourcePath $sourcePath -GameEdition $gameEdition }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-AKUClientPatch.ps1') -SourcePath $sourcePath }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-FrameControlPatch.ps1') -SourcePath $sourcePath }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-InterfacePerformancePatch.ps1') -SourcePath $sourcePath }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-SaveMapPatch.ps1') -SourcePath $sourcePath }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-SaveDiagnosticsPatch.ps1') -SourcePath $sourcePath }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $cmake = Join-Path $installation 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'

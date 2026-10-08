@@ -63,7 +63,7 @@ HRESULT Materials::initialize(){
 }
 void Materials::beginFrame(){
     frame_=device_.swapchain()->GetCurrentBackBufferIndex();auto& frame=frames_[frame_];frame.descriptors=0;frame.page=0;frame.retained.clear();
-    frame.samplerDescriptors=0;frame.samplerCache.clear();
+    frame.samplerDescriptors=0;frame.samplerCache.clear();frame.textureCache.clear();
     for(auto& page:frame.pages)page.offset=0;
 }
 void Materials::retain(ID3D12Resource* resource){if(resource)frames_[frame_].retained.emplace_back(resource);}
@@ -133,12 +133,18 @@ HRESULT Materials::pipeline(const MaterialState& s,D3D12_PRIMITIVE_TOPOLOGY topo
     HRESULT hr=device_.device()->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&native));
     if(SUCCEEDED(hr)){*result=native.Get();pipelines_.emplace(key,std::move(native));}return hr;
 }
-HRESULT Materials::draw(const MaterialVertex* vertices,UINT count,MaterialState& s,D3D12_PRIMITIVE_TOPOLOGY topology){
+HRESULT Materials::draw(const MaterialVertex* vertices,UINT count,MaterialState& s,D3D12_PRIMITIVE_TOPOLOGY topology,const uint32_t* indices,UINT indexCount){
     if(!device_.commands() || !vertices || !count || !s.renderWidth || !s.renderHeight)return E_INVALIDARG;
-    auto& frame=frames_[frame_];if(frame.descriptors>descriptorCount-4)return E_OUTOFMEMORY;
+    auto& frame=frames_[frame_];
     const UINT bytes=count*sizeof(MaterialVertex);if(UINT64(count)*sizeof(MaterialVertex)>pageBytes)return E_OUTOFMEMORY;
     uint8_t* cpu=nullptr;D3D12_GPU_VIRTUAL_ADDRESS gpu=0;HRESULT hr=reserve(bytes,4,&cpu,&gpu);if(FAILED(hr))return hr;
     std::memcpy(cpu,vertices,bytes);D3D12_VERTEX_BUFFER_VIEW vb{gpu,bytes,sizeof(MaterialVertex)};
+    D3D12_INDEX_BUFFER_VIEW ib{};
+    if(indices && indexCount){
+        const UINT64 indexBytes=UINT64(indexCount)*sizeof(uint32_t);if(indexBytes>pageBytes)return E_OUTOFMEMORY;
+        hr=reserve(static_cast<UINT>(indexBytes),4,&cpu,&gpu);if(FAILED(hr))return hr;
+        std::memcpy(cpu,indices,static_cast<size_t>(indexBytes));ib={gpu,static_cast<UINT>(indexBytes),DXGI_FORMAT_R32_UINT};
+    }
     Constants c{};
     using namespace DirectX;XMFLOAT4X4 matrix;
     const auto world=XMLoadFloat4x4(reinterpret_cast<const XMFLOAT4X4*>(&s.world));
@@ -179,22 +185,40 @@ HRESULT Materials::draw(const MaterialVertex* vertices,UINT count,MaterialState&
     auto textureCpu=frame.textures->GetCPUDescriptorHandleForHeapStart();auto samplerCpu=frame.samplers->GetCPUDescriptorHandleForHeapStart();
     const UINT textureStride=device_.device()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     const UINT samplerStride=device_.device()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-    textureCpu.ptr+=SIZE_T(frame.descriptors)*textureStride;
+    std::array<uintptr_t,8> textureKey{};
+    for(UINT i=0;i<4;++i)if(s.textures[i]){
+        hr=uploadTexture(device_,*s.textures[i]);if(FAILED(hr))return hr;
+        textureBarrier(device_.commands(),*s.textures[i],D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        textureKey[i]=reinterpret_cast<uintptr_t>(s.textures[i]->resource.Get());
+        textureKey[4+i]=s.textures[i]->componentMapping;
+        c.textureOptions[i][2]=1;
+    }
+    UINT textureOffset=0;auto textureFound=frame.textureCache.find(textureKey);
+    if(textureFound!=frame.textureCache.end())textureOffset=textureFound->second;
+    else{
+        if(frame.descriptors>descriptorCount-4)return E_OUTOFMEMORY;
+        textureOffset=frame.descriptors;frame.descriptors+=4;
+        textureCpu.ptr+=SIZE_T(textureOffset)*textureStride;
+        for(UINT i=0;i<4;++i){
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv{};srv.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;srv.Texture2D.MipLevels=1;
+            srv.Format=DXGI_FORMAT_R8G8B8A8_UNORM;srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            ID3D12Resource* resource=nullptr;
+            if(s.textures[i]){
+                resource=s.textures[i]->resource.Get();srv.Format=s.textures[i]->format;
+                srv.Texture2D.MipLevels=static_cast<UINT>(s.textures[i]->levels.size());
+                srv.Shader4ComponentMapping=s.textures[i]->componentMapping;frame.retained.push_back(s.textures[i]->resource);
+            }
+            device_.device()->CreateShaderResourceView(resource,&srv,textureCpu);textureCpu.ptr+=textureStride;
+        }
+        frame.textureCache.emplace(textureKey,textureOffset);
+    }
     for(UINT i=0;i<4;++i){
-        const DWORD* t=s.stage[i];c.colorOp[i][0]=t[D3DTSS_COLOROP];c.colorOp[i][1]=t[D3DTSS_COLORARG1];c.colorOp[i][2]=t[D3DTSS_COLORARG2];
-        c.alphaOp[i][0]=t[D3DTSS_ALPHAOP];c.alphaOp[i][1]=t[D3DTSS_ALPHAARG1];c.alphaOp[i][2]=t[D3DTSS_ALPHAARG2];
+        const DWORD* t=s.stage[i];c.colorOp[i][0]=t[D3DTSS_COLOROP];c.colorOp[i][1]=t[D3DTSS_COLORARG1];c.colorOp[i][2]=t[D3DTSS_COLORARG2];c.colorOp[i][3]=t[D3DTSS_COLORARG0];
+        c.alphaOp[i][0]=t[D3DTSS_ALPHAOP];c.alphaOp[i][1]=t[D3DTSS_ALPHAARG1];c.alphaOp[i][2]=t[D3DTSS_ALPHAARG2];c.alphaOp[i][3]=t[D3DTSS_ALPHAARG0];
         c.textureOptions[i][0]=t[D3DTSS_TEXCOORDINDEX];c.textureOptions[i][1]=t[D3DTSS_TEXTURETRANSFORMFLAGS];
         c.bumpMatrix[i][0]=floating(t[D3DTSS_BUMPENVMAT00]);c.bumpMatrix[i][1]=floating(t[D3DTSS_BUMPENVMAT01]);
         c.bumpMatrix[i][2]=floating(t[D3DTSS_BUMPENVMAT10]);c.bumpMatrix[i][3]=floating(t[D3DTSS_BUMPENVMAT11]);
         c.bumpLuminance[i][0]=floating(t[D3DTSS_BUMPENVLSCALE]);c.bumpLuminance[i][1]=floating(t[D3DTSS_BUMPENVLOFFSET]);
-        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};srv.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;srv.Texture2D.MipLevels=1;
-        srv.Format=DXGI_FORMAT_R8G8B8A8_UNORM;srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        ID3D12Resource* resource=nullptr;
-        if(s.textures[i]){hr=uploadTexture(device_,*s.textures[i]);if(FAILED(hr))return hr;
-            textureBarrier(device_.commands(),*s.textures[i],D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            resource=s.textures[i]->resource.Get();srv.Format=s.textures[i]->format;srv.Texture2D.MipLevels=static_cast<UINT>(s.textures[i]->levels.size());
-            srv.Shader4ComponentMapping=s.textures[i]->componentMapping;c.textureOptions[i][2]=1;frame.retained.push_back(s.textures[i]->resource);}
-        device_.device()->CreateShaderResourceView(resource,&srv,textureCpu);textureCpu.ptr+=textureStride;
     }
     constexpr DWORD samplerStates[]={D3DTSS_ADDRESSU,D3DTSS_ADDRESSV,D3DTSS_ADDRESSW,D3DTSS_MINFILTER,D3DTSS_MAGFILTER,
         D3DTSS_MIPFILTER,D3DTSS_MIPMAPLODBIAS,D3DTSS_MAXMIPLEVEL,D3DTSS_MAXANISOTROPY,D3DTSS_BORDERCOLOR};
@@ -221,11 +245,11 @@ HRESULT Materials::draw(const MaterialVertex* vertices,UINT count,MaterialState&
     ID3D12PipelineState* pso=nullptr;hr=pipeline(s,topology,&pso);if(FAILED(hr))return hr;
     auto* commands=device_.commands();ID3D12DescriptorHeap* heaps[]={frame.textures.Get(),frame.samplers.Get()};commands->SetDescriptorHeaps(2,heaps);
     commands->SetGraphicsRootSignature(root_.Get());commands->SetPipelineState(pso);commands->SetGraphicsRootConstantBufferView(0,gpu);
-    auto textures=frame.textures->GetGPUDescriptorHandleForHeapStart();textures.ptr+=UINT64(frame.descriptors)*textureStride;
+    auto textures=frame.textures->GetGPUDescriptorHandleForHeapStart();textures.ptr+=UINT64(textureOffset)*textureStride;
     auto samplers=frame.samplers->GetGPUDescriptorHandleForHeapStart();samplers.ptr+=UINT64(samplerOffset)*samplerStride;
-    commands->SetGraphicsRootDescriptorTable(1,textures);commands->SetGraphicsRootDescriptorTable(2,samplers);frame.descriptors+=4;
+    commands->SetGraphicsRootDescriptorTable(1,textures);commands->SetGraphicsRootDescriptorTable(2,samplers);
     commands->OMSetStencilRef(s.render[D3DRS_STENCILREF]);commands->IASetVertexBuffers(0,1,&vb);commands->IASetPrimitiveTopology(topology);
-    commands->DrawInstanced(count,1,0,0);return S_OK;
+    if(indices && indexCount){commands->IASetIndexBuffer(&ib);commands->DrawIndexedInstanced(indexCount,1,0,0,0);}else commands->DrawInstanced(count,1,0,0);return S_OK;
 }
 void Materials::shutdown(){
     device_.waitIdle();pipelines_.clear();root_.Reset();vertexShader_.Reset();pixelShader_.Reset();
