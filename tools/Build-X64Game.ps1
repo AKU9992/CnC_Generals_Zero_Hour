@@ -1,11 +1,12 @@
 [CmdletBinding()]
-param([switch]$ConfigureOnly, [switch]$Clean, [ValidateSet('ZeroHour','Generals')][string]$Edition='ZeroHour')
+param([switch]$ConfigureOnly, [switch]$Clean, [switch]$Native12, [ValidateSet('ZeroHour','Generals')][string]$Edition='ZeroHour')
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 $commit = 'b805c12ee1aedc0a4b241006803b8e04bbf288a6'
 $sourcePath = Join-Path $repositoryPath ('.build\community-reference-x64\GeneralsGameCode-' + $commit)
 $archivePath = Join-Path $repositoryPath '.build\community-reference.zip'
 $buildPath = Join-Path $repositoryPath $(if($Edition -eq 'Generals'){'.build\game-generals-x64'}else{'.build\game-x64'})
+if($Native12){$buildPath=Join-Path $repositoryPath $(if($Edition -eq 'Generals'){'.build\game-generals-native12'}else{'.build\game-zerohour-native12'})}
 $gameEdition=if($Edition -eq 'Generals'){'Generals'}else{'GeneralsMD'}
 $buildTarget=if($Edition -eq 'Generals'){'g_generals'}else{'z_generals'}
 if (-not (Test-Path -LiteralPath (Join-Path $sourcePath 'CMakeLists.txt'))) {
@@ -45,7 +46,9 @@ $dx8Text = [IO.File]::ReadAllText($dx8Cmake)
 $dx8Text = $dx8Text.Replace('INTERFACE d3d8 dinput8 dxguid', 'INTERFACE dinput8 dxguid')
 $dx8Text = $dx8Text.Replace('target_link_libraries(d3d8lib INTERFACE d3dx8)', '# x64 D3DX compatibility is linked separately.')
 $dx8Text = [regex]::Replace($dx8Text, '(?m)^\s*target_link_directories\(d3d8lib BEFORE INTERFACE \$\{CMAKE_CURRENT_SOURCE_DIR\}\)\s*$', '')
-Copy-Item -LiteralPath (Join-Path $repositoryPath 'renderer\D3DX8CompatibilityX64.cpp') -Destination (Join-Path $dx8Path 'D3DX8CompatibilityX64.cpp') -Force
+$compatibilitySource=if($Native12){'renderer\D3DX8CompatibilityNative12.cpp'}else{'renderer\D3DX8CompatibilityX64.cpp'}
+Copy-Item -LiteralPath (Join-Path $repositoryPath $compatibilitySource) -Destination (Join-Path $dx8Path 'D3DX8CompatibilityX64.cpp') -Force
+if($Native12){Copy-Item -LiteralPath (Join-Path $dependencyRoot 'stb-src/stb_image.h') -Destination $dx8Path -Force}
 if (-not $dx8Text.Contains('add_library(d3dx8_compat')) {
     $dx8Text += @'
 
@@ -69,6 +72,7 @@ target_link_libraries(d3d8lib INTERFACE d3dx8_compat)
 & (Join-Path $PSScriptRoot 'Apply-LegacyRegistryViewPatch.ps1') -SourcePath $sourcePath
 & (Join-Path $PSScriptRoot 'Apply-X64TextureDiagnostics.ps1') -SourcePath $sourcePath
 if($Edition -eq 'Generals'){ & (Join-Path $PSScriptRoot 'Apply-GeneralsStartupPatch.ps1') -SourcePath $sourcePath }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-NativeW3DPatch.ps1') -SourcePath $sourcePath -GameEdition $gameEdition }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $cmake = Join-Path $installation 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
@@ -88,6 +92,7 @@ $command = '"' + $cmake + '" -S "' + $sourcePath + '" -B "' + $buildPath + '" -G
 & cmd.exe /d /c $commandPath
 if ($LASTEXITCODE -ne 0) { throw 'x64 configuration failed.' }
 if (-not $ConfigureOnly) {
+    if($Native12){ & (Join-Path $PSScriptRoot 'Build-NativeRenderer12.ps1') -W3D -Neural }
     $commandPath = Join-Path $buildPath 'build.cmd'
     # Localized cl.exe /showIncludes is not reliably recognized by this Ninja.
     # Rebuild all objects after header changes to prevent mixed x86/x64 ABI.
@@ -102,4 +107,9 @@ if (-not $ConfigureOnly) {
     & cmd.exe /d /c $commandPath
     if ($LASTEXITCODE -ne 0) { throw 'x64 game build failed; inspect compiler/linker diagnostics.' }
     [IO.File]::WriteAllText($signaturePath, $headerSignature)
+    if($Native12){
+        $executableDirectory=Join-Path $buildPath $gameEdition
+        Copy-Item -LiteralPath (Join-Path $repositoryPath '.build/native12/generals-native12.dll') -Destination $executableDirectory -Force
+        & (Join-Path $PSScriptRoot 'Copy-StreamlineRuntime.ps1') -ExecutableDirectory $executableDirectory
+    }
 }

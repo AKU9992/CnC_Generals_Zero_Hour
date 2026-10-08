@@ -42,6 +42,7 @@ public:
     ID3D12CommandQueue* queue() const { return queue_.Get(); }
     IDXGISwapChain3* swapchain() const { return swap_.Get(); }
     ID3D12GraphicsCommandList* commands() const { return recording_ ? commands_.Get() : nullptr; }
+    ID3D12Resource* target() const { return swap_ ? frames_[swap_->GetCurrentBackBufferIndex()].target.Get() : nullptr; }
     UINT width() const { return width_; }
     UINT height() const { return height_; }
     const DXGI_ADAPTER_DESC1& adapterDescription() const { return adapterDescription_; }

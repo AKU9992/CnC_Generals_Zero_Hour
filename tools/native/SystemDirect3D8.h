@@ -8,7 +8,8 @@ inline HMODULE loadSystemDirect3D8()
 {
     wchar_t renderer[16] = {};
     const DWORD rendererLength = GetEnvironmentVariableW(L"GENERALS_RENDERER", renderer, 16);
-    if ((rendererLength == 5 && lstrcmpW(renderer, L"d3d12") == 0)
+    const bool native12 = rendererLength == 8 && lstrcmpW(renderer, L"native12") == 0;
+    if (native12 || (rendererLength == 5 && lstrcmpW(renderer, L"d3d12") == 0)
 #if defined(_WIN64)
         || rendererLength == 0 // Windows has no native x64 Direct3D8 runtime.
 #endif
@@ -18,8 +19,8 @@ inline HMODULE loadSystemDirect3D8()
         const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
         if (!length || length >= MAX_PATH) return nullptr;
         wchar_t* separator = wcsrchr(modulePath, L'\\');
-        const wchar_t bridgeName[] = L"generals-d3d12.dll";
-        if (!separator || separator - modulePath + 1 + sizeof(bridgeName) / sizeof(wchar_t) > MAX_PATH)
+        const wchar_t* bridgeName = native12 ? L"generals-native12.dll" : L"generals-d3d12.dll";
+        if (!separator || separator - modulePath + 1 + wcslen(bridgeName) + 1 > MAX_PATH)
             return nullptr;
         lstrcpyW(separator + 1, bridgeName);
         // A requested DX12 renderer must fail explicitly if its DLL is missing.

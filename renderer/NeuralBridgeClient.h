@@ -4,7 +4,8 @@
 struct IDirect3DDevice8;
 namespace generals_mods {
 template<class F> inline F neuralEntry(const char* name) {
-    HMODULE bridge=GetModuleHandleW(L"generals-d3d12.dll");
+    HMODULE bridge=GetModuleHandleW(L"generals-native12.dll");
+    if(!bridge) bridge=GetModuleHandleW(L"generals-d3d12.dll");
     return bridge ? reinterpret_cast<F>(GetProcAddress(bridge,name)):nullptr;
 }
 inline void neuralShutdown(IDirect3DDevice8* device) {

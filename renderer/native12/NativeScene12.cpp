@@ -51,7 +51,7 @@ HRESULT Scene::initialize(){
     hr=texture(DXGI_FORMAT_R16G16B16A16_FLOAT,width_,height_,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,D3D12_RESOURCE_STATE_COMMON,&color_);
     if(SUCCEEDED(hr)) hr=texture(DXGI_FORMAT_R16G16_FLOAT,width_,height_,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,D3D12_RESOURCE_STATE_COMMON,&motion_);
     if(SUCCEEDED(hr)) hr=texture(DXGI_FORMAT_R32_FLOAT,width_,height_,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,D3D12_RESOURCE_STATE_COMMON,&depth_);
-    if(SUCCEEDED(hr)) hr=texture(DXGI_FORMAT_D32_FLOAT,width_,height_,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,D3D12_RESOURCE_STATE_DEPTH_WRITE,&z_);
+    if(SUCCEEDED(hr)) hr=texture(DXGI_FORMAT_D24_UNORM_S8_UINT,width_,height_,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,D3D12_RESOURCE_STATE_DEPTH_WRITE,&z_);
     if(SUCCEEDED(hr)) hr=texture(DXGI_FORMAT_R16G16B16A16_FLOAT,device_.width(),device_.height(),D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COMMON,&output_);
     if(FAILED(hr)) return hr;
     auto handle=targets_->GetCPUDescriptorHandleForHeapStart();
@@ -108,7 +108,7 @@ float4 PS(Varying i):SV_TARGET{return color.Load(int3(int2(i.position.xy),0));}
         {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,12,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};pipelineDefaults(pso);
     pso.pRootSignature=sceneRoot_.Get();pso.VS={vs->GetBufferPointer(),vs->GetBufferSize()};pso.PS={ps->GetBufferPointer(),ps->GetBufferSize()};
-    pso.InputLayout={layout,_countof(layout)};pso.DepthStencilState.DepthEnable=TRUE;pso.DSVFormat=DXGI_FORMAT_D32_FLOAT;
+    pso.InputLayout={layout,_countof(layout)};pso.DepthStencilState.DepthEnable=TRUE;pso.DSVFormat=DXGI_FORMAT_D24_UNORM_S8_UINT;
     pso.NumRenderTargets=3;pso.RTVFormats[0]=DXGI_FORMAT_R16G16B16A16_FLOAT;
     pso.RTVFormats[1]=DXGI_FORMAT_R16G16_FLOAT;pso.RTVFormats[2]=DXGI_FORMAT_R32_FLOAT;
     hr=device_.device()->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&scenePso_));
@@ -144,7 +144,7 @@ HRESULT Scene::begin(const float clear[4]){
     commands->ClearRenderTargetView(handle,clear,0,nullptr);handle.ptr+=stride;
     const float zero[4]={0,0,0,0},farDepth[4]={1,0,0,0};
     commands->ClearRenderTargetView(handle,zero,0,nullptr);handle.ptr+=stride;commands->ClearRenderTargetView(handle,farDepth,0,nullptr);
-    auto depth=zView_->GetCPUDescriptorHandleForHeapStart();commands->ClearDepthStencilView(depth,D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);
+    auto depth=zView_->GetCPUDescriptorHandleForHeapStart();commands->ClearDepthStencilView(depth,D3D12_CLEAR_FLAG_DEPTH|D3D12_CLEAR_FLAG_STENCIL,1,0,0,nullptr);
     handle=targets_->GetCPUDescriptorHandleForHeapStart();commands->OMSetRenderTargets(3,&handle,TRUE,&depth);
     D3D12_VIEWPORT viewport{0,0,float(width_),float(height_),0,1};D3D12_RECT scissor{0,0,LONG(width_),LONG(height_)};
     commands->RSSetViewports(1,&viewport);commands->RSSetScissorRects(1,&scissor);
@@ -163,6 +163,11 @@ HRESULT Scene::draw(const Vertex* vertices,UINT count,const float current[16],co
     auto* commands=device_.commands();commands->SetPipelineState(scenePso_.Get());commands->SetGraphicsRootSignature(sceneRoot_.Get());
     commands->SetGraphicsRoot32BitConstants(0,36,&constants,0);commands->IASetVertexBuffers(0,1,&vb);
     commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);commands->DrawInstanced(count,1,0,0);return S_OK;
+}
+HRESULT Scene::bind(){
+    if(!active_ || !device_.commands())return E_UNEXPECTED;
+    auto color=targets_->GetCPUDescriptorHandleForHeapStart();auto depth=zView_->GetCPUDescriptorHandleForHeapStart();
+    device_.commands()->OMSetRenderTargets(3,&color,TRUE,&depth);return S_OK;
 }
 HRESULT Scene::finish(const sl::Constants& camera,uint32_t frameIndex){
     if(!active_ || !device_.commands()) return E_UNEXPECTED;

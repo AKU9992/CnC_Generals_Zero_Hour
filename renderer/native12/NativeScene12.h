@@ -14,6 +14,9 @@ public:
     Scene& operator=(const Scene&)=delete;
     HRESULT initialize();
     HRESULT begin(const float clear[4]);
+    HRESULT bind();
+    ID3D12Resource* colorTarget() const {return color_.Get();}
+    ID3D12Resource* depthTarget() const {return z_.Get();}
     HRESULT draw(const Vertex* vertices,UINT count,const float current[16],const float previous[16],sl::float2 jitter);
     HRESULT finish(const sl::Constants& camera,uint32_t frameIndex);
     // Diagnostic readback after frame submission; does not record during a frame.
