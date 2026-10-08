@@ -74,6 +74,7 @@ target_link_libraries(d3d8lib INTERFACE d3dx8_compat)
 if($Edition -eq 'Generals'){ & (Join-Path $PSScriptRoot 'Apply-GeneralsStartupPatch.ps1') -SourcePath $sourcePath }
 if($Native12){ & (Join-Path $PSScriptRoot 'Apply-NativeW3DPatch.ps1') -SourcePath $sourcePath -GameEdition $gameEdition }
 if($Native12){ & (Join-Path $PSScriptRoot 'Apply-AKUClientPatch.ps1') -SourcePath $sourcePath }
+if($Native12){ & (Join-Path $PSScriptRoot 'Apply-EdgeScrollPersistencePatch.ps1') -SourcePath $sourcePath }
 if($Native12){ & (Join-Path $PSScriptRoot 'Apply-FrameControlPatch.ps1') -SourcePath $sourcePath }
 if($Native12){ & (Join-Path $PSScriptRoot 'Apply-InterfacePerformancePatch.ps1') -SourcePath $sourcePath }
 if($Native12){ & (Join-Path $PSScriptRoot 'Apply-SaveMapPatch.ps1') -SourcePath $sourcePath }

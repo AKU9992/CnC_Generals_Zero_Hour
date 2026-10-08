@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$BinaryRoot,[string]$AssetRoot,[string]$OutputRoot,[int]$Seconds=20,[string]$FpsMode='Diagnostic',[double]$CustomFps=80,[switch]$Extended,[string]$Scenario,[string]$Map,[ValidateSet('Generals','ZeroHour')][string]$Edition='ZeroHour',[string]$LoadSave,[string]$LoadReplay)
+param([string]$BinaryRoot,[string]$AssetRoot,[string]$OutputRoot,[int]$Seconds=20,[string]$FpsMode='Diagnostic',[double]$CustomFps=80,[switch]$Extended,[string]$Scenario,[string]$Map,[ValidateSet('Generals','ZeroHour')][string]$Edition='ZeroHour',[string]$LoadSave,[string]$LoadReplay,[switch]$LegacyMousePreferences)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot -Parent
 if(-not $AssetRoot){$AssetRoot=Join-Path $repo '.build/native-client-release/install-check-fix2'}
@@ -18,6 +18,7 @@ try{
  foreach($case in $cases){
   $user=Join-Path $OutputRoot $case.Id;$null=New-Item -ItemType Directory $user -Force
   [IO.File]::WriteAllText((Join-Path $user 'Options.ini'),"StaticGameLOD = High`r`nIdealStaticGameLOD = High`r`nUseShadowVolumes = yes`r`nUseShadowDecals = yes`r`n")
+  if($LegacyMousePreferences){[IO.File]::AppendAllText((Join-Path $user 'Options.ini'),"CursorCaptureEnabledInWindowedGame = no"+[Environment]::NewLine+"CursorCaptureEnabledInFullscreenGame = no"+[Environment]::NewLine+"ScreenEdgeScrollEnabledInWindowedApp = no"+[Environment]::NewLine+"ScreenEdgeScrollEnabledInFullscreenApp = no"+[Environment]::NewLine)}
   $asset=Join-Path $AssetRoot $case.Game
   $exe=if($BinaryRoot){Join-Path $BinaryRoot ($case.Game+'/Client/generals-client.exe')}elseif($case.Game -eq 'CaCG'){Join-Path $repo '.build/game-generals-native12/Generals/generalsv.exe'}else{Join-Path $repo '.build/game-zerohour-native12/GeneralsMD/generalszh.exe'}
   if(-not $BinaryRoot){Copy-Item (Join-Path $repo '.build/native12/generals-native12.dll') (Split-Path $exe -Parent) -Force}

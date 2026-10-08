@@ -67,7 +67,8 @@ foreach($edition in @('Generals','GeneralsMD')) {
  if(-not $t.Contains('akuEdgeProbeDone')) {
   $probe=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'native/AKUClientEdgeProbe.inc'))
   $t=$t.Replace('performanceLog.beginFrame();',$probe+[Environment]::NewLine+'performanceLog.beginFrame();')
-  foreach($header in @('LookAtXlat','View','InGameUI','Display')) {$t='#include "GameClient/'+$header+'.h"'+[Environment]::NewLine+$t}
+  $t='#include "Common/OptionPreferences.h"'+[Environment]::NewLine+$t
+  foreach($header in @('LookAtXlat','View','InGameUI','Display','Mouse')) {$t='#include "GameClient/'+$header+'.h"'+[Environment]::NewLine+$t}
   [IO.File]::WriteAllText($p,$t)
  }
 }

@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$OutputDirectory,[ValidateSet("Fix4","Fix5")][string]$PatchVersion="Fix4",[string]$ReportPath)
+param([string]$OutputDirectory,[ValidateSet("Fix4","Fix5","Fix6")][string]$PatchVersion="Fix4",[string]$ReportPath)
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $releaseName='AKU9992-Native12-'+$PatchVersion
@@ -17,6 +17,7 @@ if($LASTEXITCODE -ne 0){throw 'Launcher compilation failed.'}
 if($LASTEXITCODE -ne 0){throw 'Patch installer compilation failed.'}
 $readme="AKU9992 — Native12 x64 — $PatchVersion`r`n`r`nЗакройте обе игры. Установите патч в общую папку CaCG и CaCGZH либо распакуйте ZIP с заменой файлов.`r`nОбычный запуск: generals.exe. Настройки FPS: AKU9992-Settings.cmd в папке выбранной игры.`r`nStandard: 60 FPS либо ниже частоты экрана. Auto: активная частота экрана. Custom: до активной частоты экрана. В фоне предел 30 FPS. VSync выбирается отдельно.`r`nСимуляция сохраняет 30 тиков/с при обычной скорости; предел FPS не меняет скорость игры. Индексированная геометрия сокращает работу CPU без снижения качества.`r`nСохранены исправления звука, иконок, полос интерфейса, воды, теней и прокрутки мышью. DLSS Quality/DLAA требуют совместимой RTX.`r`nОтчёт проверки: Client/AKU9992-Validation.md. Сохранения и выбранные настройки FPS патч не заменяет.`r`nОткат: закройте игры и распакуйте сохранённый AKU9992-Native12-Fix3-Update.zip с заменой файлов. Для полного отката настроек удалите только Client/AKU9992-settings.ini и AKU9992-Settings.cmd.`r`nИсправлена загрузка сохранений в новый профиль и восстановление локального игрока; формат файлов сохранён. Авторство сборки: AKU9992.`r`n"
 if($PatchVersion -eq "Fix5"){$readme=$readme.Replace("AKU9992-Native12-Fix3-Update.zip","AKU9992-Native12-Fix4-Update.zip")+"`r`nFix5: исправлен сброс кэша текста меню настроек и повторные выделения DX12-дескрипторов.`r`n"}
+if($PatchVersion -eq "Fix6"){$readme=$readme.Replace("AKU9992-Native12-Fix3-Update.zip","AKU9992-Native12-Fix5-Update.zip")+[Environment]::NewLine+"Fix6: прокрутка мышью сохраняется после применения игровых настроек; исправления Fix5 включены."+[Environment]::NewLine}
 $files=@()
 foreach($game in @('CaCG','CaCGZH')){
  $exe=if($game -eq 'CaCG'){'.build/game-generals-native12/Generals/generalsv.exe'}else{'.build/game-zerohour-native12/GeneralsMD/generalszh.exe'}
