@@ -56,11 +56,12 @@ public:
     }
     bool ready() const { return ready_; }
     HMODULE module() const { return module_; }
-    void beforePresent() {
-        // The 9On12 swapchain has no public IDXGISwapChain accessor. In pinned
+    void beforePresent(IDXGISwapChain* swapchain = nullptr, UINT syncInterval = 0, UINT flags = 0) {
+        // Native callers supply their real swapchain. The 9On12 swapchain has
+        // no public IDXGISwapChain accessor. In pinned
         // SL 2.14.1 this common hook uses only Flags for bookkeeping/collection;
         // DLSS SR does not need a native swapchain (unlike frame generation).
-        if(ready_) {bool skip=false;beforePresent_(nullptr,0,0,skip);}
+        if(ready_) {bool skip=false;beforePresent_(swapchain,syncInterval,flags,skip);}
     }
     void afterPresent() { if(ready_) afterPresent_(0); }
     ~StreamlineRuntime() {

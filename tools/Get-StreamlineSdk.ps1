@@ -5,6 +5,7 @@ $repositoryPath = Split-Path $PSScriptRoot -Parent
 $sdkDirectory = Join-Path $repositoryPath '.build\streamline-sdk-v2.14.1'
 $archivePath = Join-Path $repositoryPath '.build\streamline-sdk-v2.14.1.zip'
 $expectedSha256 = '92c4d954631a1710da86ca3fa8d5034f2b9503838c95fc4ae977ae149319781b'
+$null = New-Item -ItemType Directory -Path (Split-Path $archivePath -Parent) -Force
 if (-not (Test-Path -LiteralPath $archivePath)) {
     Invoke-WebRequest -Uri 'https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip' -OutFile $archivePath
 }

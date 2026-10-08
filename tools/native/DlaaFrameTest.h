@@ -6,16 +6,23 @@
 #include <cstring>
 #include <wrl/client.h>
 #include <cstdio>
+#include <functional>
 
 // Static synthetic frame, not a substitute for game depth/motion data.
-inline bool testDlaaFrame(ID3D12Device* device, HMODULE streamLine, UINT width = 3440, UINT height = 1440, uint32_t frameIndex = 0, sl::DLSSMode mode = sl::DLSSMode::eDLAA)
+inline bool testDlaaFrame(ID3D12Device* device, HMODULE streamLine, UINT width = 3440, UINT height = 1440, uint32_t frameIndex = 0, sl::DLSSMode mode = sl::DLSSMode::eDLAA,
+    std::function<sl::Result(const generals_mods::DlaaFrame&)> externalEvaluation = {}, UINT suppliedWidth = 0, UINT suppliedHeight = 0)
 {
     using Microsoft::WRL::ComPtr;
     generals_mods::DlaaPass pass(streamLine);
-    if (pass.initialize(width, height, mode) != sl::Result::eOk) return false;
-    const UINT renderWidth = pass.renderWidth(), renderHeight = pass.renderHeight();
+    if (!externalEvaluation && pass.initialize(width, height, mode) != sl::Result::eOk) return false;
+    const UINT renderWidth = externalEvaluation ? suppliedWidth : pass.renderWidth();
+    const UINT renderHeight = externalEvaluation ? suppliedHeight : pass.renderHeight();
+    if (!renderWidth || !renderHeight) return false;
+    auto evaluate = [&](const generals_mods::DlaaFrame& frame) {
+        return externalEvaluation ? externalEvaluation(frame) : pass.evaluate(frame);
+    };
     if (mode == sl::DLSSMode::eMaxQuality && (renderWidth >= width || renderHeight >= height)) return false;
-    if (pass.evaluate({}) != sl::Result::eErrorInvalidParameter) return false;
+    if (evaluate({}) != sl::Result::eErrorInvalidParameter) return false;
     ComPtr<ID3D12CommandQueue> queue;
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     if (FAILED(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue)))) return false;
@@ -72,16 +79,17 @@ inline bool testDlaaFrame(ID3D12Device* device, HMODULE streamLine, UINT width =
     camera.cameraPos = {0,0,0}; camera.cameraUp = {0,1,0}; camera.cameraRight = {1,0,0}; camera.cameraFwd = {0,0,1};
     camera.cameraNear = 0.1f; camera.cameraFar = 1000; camera.cameraFOV = 1; camera.cameraAspectRatio = float(width) / height;
     camera.mvecScale = {1,1}; camera.jitterOffset = {0,0};
+    camera.cameraPinholeOffset = {0,0};
     camera.depthInverted = sl::Boolean::eFalse; camera.cameraMotionIncluded = sl::Boolean::eTrue;
     camera.motionVectors3D = sl::Boolean::eFalse; camera.reset = sl::Boolean::eTrue;
     auto invalid = frame;
     invalid.outputColor = invalid.sceneColor;
-    if (pass.evaluate(invalid) != sl::Result::eErrorInvalidParameter) return false;
+    if (evaluate(invalid) != sl::Result::eErrorInvalidParameter) return false;
     invalid = frame; invalid.depth = nullptr;
-    if (pass.evaluate(invalid) != sl::Result::eErrorInvalidParameter) return false;
-    const sl::Result evaluation = pass.evaluate(frame);
+    if (evaluate(invalid) != sl::Result::eErrorInvalidParameter) return false;
+    const sl::Result evaluation = evaluate(frame);
     std::printf("Synthetic %s frame %ux%u -> %ux%u evaluation: %d\n", mode == sl::DLSSMode::eDLAA ? "DLAA" : "DLSS Quality", renderWidth, renderHeight, width, height, static_cast<int>(evaluation));
-    if (evaluation != sl::Result::eOk) { pass.release(); return false; }
+    if (evaluation != sl::Result::eOk) { if (!externalEvaluation) pass.release(); return false; }
     D3D12_RESOURCE_BARRIER barrier{}; barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = textures[3].Get(); barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE; barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -117,7 +125,7 @@ inline bool testDlaaFrame(ID3D12Device* device, HMODULE streamLine, UINT width =
     const float blue = DirectX::PackedVector::XMConvertHalfToFloat(pixel[2]);
     D3D12_RANGE noWrites{0,0}; readback->Unmap(0, &noWrites);
     std::printf("DLAA output center RGB: %.4f %.4f %.4f\n", red, green, blue);
-    const sl::Result released = pass.release();
+    const sl::Result released = externalEvaluation ? sl::Result::eOk : pass.release();
     return released == sl::Result::eOk && std::isfinite(red) && std::isfinite(green) && std::isfinite(blue) &&
         std::abs(red - 0.25f) < 0.15f && std::abs(green - 0.5f) < 0.15f && std::abs(blue - 0.75f) < 0.15f;
 }

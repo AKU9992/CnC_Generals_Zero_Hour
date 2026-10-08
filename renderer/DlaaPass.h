@@ -106,6 +106,7 @@ public:
         result = setTags_(*token, viewport_, tags, 4, frame.commands);
         if (result != sl::Result::eOk) return result;
         const sl::BaseStructure* inputs[] = { &viewport_ };
+        evaluated_ = true;
         return evaluate_(sl::kFeatureDLSS, *token, inputs, 1, frame.commands);
     }
 
@@ -113,8 +114,10 @@ public:
     sl::Result release()
     {
         if (!ready_) return sl::Result::eOk;
-        ready_ = false;
-        return freeResources_(sl::kFeatureDLSS, viewport_);
+        if (!evaluated_) { ready_ = false; return sl::Result::eOk; }
+        const auto result = freeResources_(sl::kFeatureDLSS, viewport_);
+        if (result == sl::Result::eOk) { ready_ = false; evaluated_ = false; }
+        return result;
     }
 
 private:
@@ -124,6 +127,7 @@ private:
     uint32_t width_ = 0, height_ = 0;
     uint32_t renderWidth_ = 0, renderHeight_ = 0;
     bool ready_ = false;
+    bool evaluated_ = false;
     PFun_slDLSSSetOptions* setOptions_ = nullptr;
     PFun_slGetNewFrameToken* newFrame_ = nullptr;
     PFun_slSetConstants* setConstants_ = nullptr;
